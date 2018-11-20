@@ -42,7 +42,7 @@
  *  4 byte match 1dcf3e20   9.77 * 1.80M =    17.586 MHash
  *     atime:1539471984
  *     ctime:1541188269
- *  5 byte match 1492f859a6 21860 * 1.8M = 39348     MHash
+ *  5 byte match 61a46cc192 21860 * 1.8M = 39348     MHash
  *     atime:1540342039
  *     ctime:1541210550
  */

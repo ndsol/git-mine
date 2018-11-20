@@ -199,25 +199,13 @@ public:
   }
 
   int hash(Sha1Hash& sha, Blake2Hash& b2h) {
+    // header.data() contains a \x00 character, so leave it out of string s.
     sha.update(header.data(), header.size());
-    sha.update(parent.c_str(), parent.size());
-    sha.update(author.c_str(), author.size());
-    sha.update(author_time.c_str(), author_time.size());
-    sha.update(author_tz.c_str(), author_tz.size());
-    sha.update(committer.c_str(), committer.size());
-    sha.update(committer_time.c_str(), committer_time.size());
-    sha.update(committer_tz.c_str(), committer_tz.size());
-    sha.update(log.c_str(), log.size());
+    std::string s = toRawString();
+    sha.update(s.c_str(), s.size());
     sha.flush();
     b2h.update(header.data(), header.size());
-    b2h.update(parent.c_str(), parent.size());
-    b2h.update(author.c_str(), author.size());
-    b2h.update(author_time.c_str(), author_time.size());
-    b2h.update(author_tz.c_str(), author_tz.size());
-    b2h.update(committer.c_str(), committer.size());
-    b2h.update(committer_time.c_str(), committer_time.size());
-    b2h.update(committer_tz.c_str(), committer_tz.size());
-    b2h.update(log.c_str(), log.size());
+    b2h.update(s.c_str(), s.size());
     b2h.flush();
     return 0;
   }
@@ -240,6 +228,11 @@ public:
   std::string log;
   long long author_btime;
   long long committer_btime;
+
+  std::string toRawString() const {
+    return parent + author + author_time + author_tz + committer +
+           committer_time + committer_tz + log;
+  }
 
   static int parseTimestamp(std::string* packed, std::string* thetime,
                             std::string* thetz, long long* binarytime) {

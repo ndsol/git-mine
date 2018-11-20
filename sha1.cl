@@ -4,39 +4,60 @@
  * This code is not a general-purpose SHA1 implementation, though it should
  * be easy to make it into one. See the companion CPU-side code, ocl-sha1.cpp.
  *
- * This code takes a halfway-done SHA1context where the values in
+ * This code takes a halfway-done B2SHAstate where the values in
  * hash[SHA_DIGEST_LEN] are the halfway-done digest (computed on the CPU),
- * bytesRemaining is the number of bytes (packed as an array of SHA1buffer)
+ * bytesRemaining is the number of bytes (packed as an array of B2SHAbuffer)
  * left to digest, and length is the total length of the message.
  *
- * Bytes in a SHA1buffer past the end of the message *must* be set to 0, even
+ * Bytes in a B2SHAbuffer past the end of the message *must* be set to 0, even
  * though the bytesRemaining and len indicate they should be ignored.
  *
  * This code the resumes the SHA1_Update() process and computes SHA1_Final(),
  * outputting the final hash.
  *
  * Do one SHA1_Update per thread. If you don't want the SHA1_Final done (why?)
- * this could be tweaked to add another field in SHA1context 'numBlocks' and
+ * this could be tweaked to add another field in B2SHAstate 'numBlocks' and
  * only do that many SHA1_Update passes, not adding the final padding / len.
  *
  * mod(bytesRemaining, 64) == mod(len, 64) must always be true, since a
- * SHA1buffer contains 64 bytes.
+ * B2SHAbuffer contains 64 bytes.
  */
 
 #define UINT_64BYTES (64/sizeof(unsigned int))
 typedef struct {
   unsigned int buffer[UINT_64BYTES];
-} SHA1buffer;
+} B2SHAbuffer;
 
 #define SHA_DIGEST_LEN (5)
 #define B2H_DIGEST_LEN (8)
 typedef struct {
-  unsigned int len;  // The overall length of the message to digest.
-  unsigned int bytesRemaining;
-  unsigned int hash[SHA_DIGEST_LEN];
-  unsigned long b2hash[B2H_DIGEST_LEN];
   unsigned long b2iv[B2H_DIGEST_LEN];
-} SHA1context;
+  unsigned int shaiv[SHA_DIGEST_LEN];
+  unsigned int len;  // The overall length of the message to digest.
+  unsigned int bytesRemaining;  // Bytes to be digested on the GPU.
+  unsigned int buffers;  // Buffers to be digested.
+} B2SHAconst;
+
+typedef struct {
+  unsigned long b2hash[B2H_DIGEST_LEN];
+  unsigned int hash[SHA_DIGEST_LEN];
+
+  // counterPos is the position in the input of the last ASCII digit of the
+  // counter to increment while searching for a match. Incrementing a number
+  // stored as ASCII is done by incrementing the last digit, then carrying the
+  // 1 to the next digit (repeat as many times as needed).
+  unsigned int counterPos;
+
+  // counts is the number of increments done across all workers. (The workers
+  // figure out on their own who gets to do any odd work items.)
+  //
+  // When a match is found, state[idx].matchLen is set to the length of the
+  // substring that matches, and states[idx].matchCount is the remainder (how
+  // many counts were left). Otherwise both are set to 0.
+  unsigned long counts;
+  unsigned long matchCount;
+  unsigned int matchLen;
+} B2SHAstate;
 
 #define rotl(a, n) rotate((a), (n)) 
 #define rotr(a, n) rotate((a), 64-(n)) 
@@ -46,11 +67,11 @@ unsigned int swap(unsigned int val) {
             rotate(((val) & 0xFF00FF00), 8U));
 }
 
-#define mod(x,y) ((x)-((x)/y*y))
+#define mod(x, y) ((x) - ((x)/(y) * (y)))
 
-#define F2(x,y,z)  ((x) ^ (y) ^ (z))
-#define F1(x,y,z)   (bitselect(z,y,x))
-#define F0(x,y,z)   (bitselect(x, y, (x ^ z)))
+#define F2(x, y, z) ((x) ^ (y) ^ (z))
+#define F1(x, y, z) (bitselect(z, y, x))
+#define F0(x, y, z) (bitselect(x, y, (x ^ z)))
 
 // Notice that in big-endian, this counts from 0 - 7
 #define SHA1M_A 0x67452301u
@@ -202,31 +223,31 @@ static void sha1_process2(const unsigned int *W, unsigned int *digest) {
   digest[4] += E;
 } 
 
-static inline unsigned int calc_padding(__global const SHA1context* ctx) {
-  return swap(0x80 << (mod(ctx->len, 4) * 8));
+static inline unsigned int calc_padding(__constant B2SHAconst* fixed) {
+  return swap(0x80 << (mod(fixed->len, 4) * 8));
 }
 
-static inline void write_len(unsigned int* W, __global const SHA1context* ctx)
+static inline void write_len(unsigned int* W, __constant B2SHAconst* fixed)
 {
-  W[0xe] = ctx->len >> (32-3);
-  W[0xf] = ctx->len << 3;
+  W[0xe] = fixed->len >> (32-3);
+  W[0xf] = fixed->len << 3;
 }
 
-static void sha1(__global const SHA1context* ctx,
-                 __global const SHA1buffer* src,
-                 __global SHA1context* out) {
-  int tail = mod(ctx->len, 64);
+static void sha1(__constant B2SHAconst* fixed,
+                 __global B2SHAstate* state,
+                 __global const B2SHAbuffer* src) {
+  int tail = mod(fixed->len, 64);
   unsigned int hash[SHA_DIGEST_LEN] = {
-    ctx->hash[0],  // Hash IV must be set on CPU.
-    ctx->hash[1],
-    ctx->hash[2],
-    ctx->hash[3],
-    ctx->hash[4],
+    fixed->shaiv[0],  // Hash IV must be set on CPU.
+    fixed->shaiv[1],
+    fixed->shaiv[2],
+    fixed->shaiv[3],
+    fixed->shaiv[4],
   };
 
-  out->bytesRemaining = ctx->bytesRemaining;
+  unsigned int bytesRemaining = fixed->bytesRemaining;
   int i;
-  for (i = 0; out->bytesRemaining; i++, src++) {
+  for (i = 0; bytesRemaining; i++, src++) {
     unsigned int W[UINT_64BYTES];
     // Copy 64 bytes from src->buffer[], swapping to big-endian.
     // NOTE: src->buffer[] bytes past "bytesRemaining" *must* be provided as 0.
@@ -235,16 +256,16 @@ static void sha1(__global const SHA1context* ctx,
     }
 
     // If this will be the last loop and some of {padding,len} should be added.
-    if (out->bytesRemaining < 64) {
-      out->bytesRemaining = 0;
+    if (bytesRemaining < 64) {
+      bytesRemaining = 0;
       if (tail != 0) {
-        W[tail/4] |= calc_padding(ctx);
+        W[tail/4] |= calc_padding(fixed);
         if (tail < 56) {
-          write_len(W, ctx);
+          write_len(W, fixed);
         }
       }
     } else {
-      out->bytesRemaining -= 64;
+      bytesRemaining -= 64;
     }
 
     sha1_process2(W, hash);
@@ -254,16 +275,15 @@ static void sha1(__global const SHA1context* ctx,
   if (tail >= 56) {
     unsigned int W[UINT_64BYTES]={0};
     if (tail == 0) {
-      W[tail/4] |= calc_padding(ctx);
+      W[tail/4] |= calc_padding(fixed);
     }
-    write_len(W, ctx);
+    write_len(W, fixed);
 
     sha1_process2(W, hash);
   }
 
-  out->len = ctx->len;
   for (i = 0; i < SHA_DIGEST_LEN; i++) {
-    out->hash[i] = swap(hash[i]);
+    state->hash[i] = swap(hash[i]);
   }
 }
 
@@ -329,7 +349,7 @@ typedef struct
   } while(0)
 
 static void blake2b_compress(
-    __global const SHA1context* ctx,
+    __constant B2SHAconst* fixed,
     blake2b_state *S,
     const uint32_t block[B2_128BYTES/sizeof(unsigned int)]) {
   uint64_t m[16];
@@ -344,18 +364,18 @@ static void blake2b_compress(
     v[i] = S->h[i];
   }
 
-  v[ 8] = ctx->b2iv[0];
-  v[ 9] = ctx->b2iv[1];
-  v[10] = ctx->b2iv[2];
-  v[11] = ctx->b2iv[3];
-  v[12] = ctx->b2iv[4] ^ S->t[0];
+  v[ 8] = fixed->b2iv[0];
+  v[ 9] = fixed->b2iv[1];
+  v[10] = fixed->b2iv[2];
+  v[11] = fixed->b2iv[3];
+  v[12] = fixed->b2iv[4] ^ S->t[0];
 #if BLAKE2_EXABYTE_NOT_EXPECTED > 1
-  v[13] = ctx->b2iv[5] ^ S->t[1];
+  v[13] = fixed->b2iv[5] ^ S->t[1];
 #else
-  v[13] = ctx->b2iv[5];
+  v[13] = fixed->b2iv[5];
 #endif
-  v[14] = ctx->b2iv[6] ^ S->f[0];
-  v[15] = ctx->b2iv[7] /* ^ S->f[1] removed: no last_node */;
+  v[14] = fixed->b2iv[6] ^ S->f[0];
+  v[15] = fixed->b2iv[7] /* ^ S->f[1] removed: no last_node */;
 
   ROUND( 0 );
   ROUND( 1 );
@@ -386,9 +406,9 @@ static inline void blake2b_increment_counter(blake2b_state *S, uint64_t inc) {
 #endif
 }
 
-static inline void blake2b_update(__global const SHA1context* ctx,
-                                  __global const SHA1buffer* src,
-                                  __global SHA1context* out) {
+static inline void blake2b_update(__constant B2SHAconst* fixed,
+                                  __global B2SHAstate* state,
+                                  __global const B2SHAbuffer* src) {
   blake2b_state S;
 
   // inline blake2b_init:
@@ -400,7 +420,7 @@ static inline void blake2b_update(__global const SHA1context* ctx,
 
   uint32_t i;
   for( i = 0; i < sizeof(S.buf)/sizeof(S.buf[0]); i++ ) S.buf[i] = 0;
-  for( i = 0; i < B2_OUTSIZE; i++ ) S.h[i] = ctx->b2hash[i];
+  for( i = 0; i < B2_OUTSIZE; i++ ) S.h[i] = fixed->b2iv[i];
   S.buflen = 0;
 
   // xor with P->fanout       = 1;
@@ -408,7 +428,7 @@ static inline void blake2b_update(__global const SHA1context* ctx,
   S.h[0] ^= 0x01010000 | sizeof(S.h);
 
   // begin blake2b_update:
-  uint32_t rem = ctx->bytesRemaining;
+  uint32_t rem = fixed->bytesRemaining;
   while (rem > B2_128BYTES) {
     __global const unsigned int* in = src->buffer;
     for (i = 0; i < UINT_64BYTES; i++) {
@@ -420,7 +440,7 @@ static inline void blake2b_update(__global const SHA1context* ctx,
       S.buf[i] = in[i - UINT_64BYTES];
     }
     blake2b_increment_counter(&S, B2_128BYTES);
-    blake2b_compress( ctx, &S, S.buf );
+    blake2b_compress( fixed, &S, S.buf );
     src++;
     rem -= B2_128BYTES;
   }
@@ -447,16 +467,73 @@ static inline void blake2b_update(__global const SHA1context* ctx,
   // blake2b_set_lastblock( S ) is a single line, so it is inlined as:
   S.f[0] = (uint64_t)-1;
   // Rely on any extra bytes copied from src->buffer to be 0.
-  blake2b_compress( ctx, &S, S.buf );
+  blake2b_compress( fixed, &S, S.buf );
 
-  for (i = 0; i < B2_OUTSIZE; i++) out->b2hash[i] = S.h[i];
+  for (i = 0; i < B2_OUTSIZE; i++) state->b2hash[i] = S.h[i];
 }
 
-__kernel void main(__global const SHA1context* ctx,
-                   __global const SHA1buffer* src,
-                   __global SHA1context* out) {
-  unsigned int idx = get_global_id(0);
-  sha1(&ctx[idx], src, &out[idx]);
+__kernel void main(__constant B2SHAconst* fixed,
+                   __global B2SHAstate* states,
+                   __global B2SHAbuffer* srcs) {
+  #define idx get_global_id(0)
+  __global B2SHAstate* state = &states[idx];
+  __global B2SHAbuffer* src;
 
-  blake2b_update(&ctx[idx], src, &out[idx]);
+  while (state->counts) {
+    src = &srcs[idx*fixed->buffers];
+    sha1(fixed, state, src);
+    blake2b_update(fixed, state, src);
+    unsigned int i;
+    unsigned int bits;
+    for (bits = 0; bits < B2H_DIGEST_LEN*sizeof(unsigned long); bits++) {
+      unsigned long b2h = state->b2hash[bits/sizeof(unsigned long)];
+      b2h >>= 8*mod(bits, sizeof(unsigned long));
+      if ((b2h & 0xff) == (state->hash[0] & 0xff)) {
+        for (i = 1; i < SHA_DIGEST_LEN*sizeof(unsigned int); i++) {
+          if (bits + i >= B2H_DIGEST_LEN*sizeof(unsigned long)) break;
+
+          unsigned int sha = state->hash[i/sizeof(unsigned int)];
+          sha >>= 8*mod(i, sizeof(unsigned int));
+          sha &= 0xff;
+          b2h = state->b2hash[(bits+i)/sizeof(unsigned long)];
+          b2h = (b2h >> (8*mod(bits+i, sizeof(unsigned long)))) & 0xff;
+          if (b2h != sha) break;
+        }
+        if (i > state->matchLen) {
+          state->matchCount = state->counts;
+          state->matchLen = i;
+        }
+      }
+    }
+    state->counts--;
+
+    i = state->counterPos;
+    src += i / 64;
+    i &= (64 - 1);
+    bits = 8*mod(i, sizeof(unsigned int));
+    i /= sizeof(unsigned int);
+    while (i > 7) {
+      unsigned int digit = src->buffer[i];
+      src->buffer[i] = digit +
+          (((((digit >> bits) & 0xff) >= 0x39) ? -9 : 1) << bits);
+      if (((digit >> bits) & 0xff) < 0x39 /*ASCII '9'*/) {
+        break;
+      }
+      if (bits == 0) {
+        bits = 8*sizeof(unsigned int);
+        i--;
+      }
+      bits -= 8;
+    }
+  }
+  // Things that might speed it up:
+  // 1. OpenCL best practices:
+  //    * can tune the register usage with
+  // http://developer.download.nvidia.com/compute/cuda/3_2_prod/toolkit/docs/OpenCL_Extensions/cl_nv_compiler_options.txt
+  //    * can tune threads per block. 64 is min, 128 or 256 is good
+  //    * have the program auto-benchmark different global work sizes
+  // 1. Only write to out (only save the hash) if there is a match
+  // 1. Try to auto-tune the local workgroup size in power-of-2 steps
+  //    until throughput is at a max. (Number of items to test per thread
+  //    also can be tuned but basically is just a tradeoff on responsiveness.)
 }

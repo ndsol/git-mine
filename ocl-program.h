@@ -4,25 +4,6 @@
 
 namespace gitmine {
 
-class OpenCLmem {
-public:
-  OpenCLmem(OpenCLdev& dev) : dev(dev), handle(NULL) {}
-  virtual ~OpenCLmem() {
-    if (handle) {
-      clReleaseMemObject(handle);
-      handle = NULL;
-    }
-  }
-  OpenCLdev& dev;
-
-  int create(cl_mem_flags flags, size_t size);
-
-  cl_mem getHandle() const { return handle; }
-
-private:
-  cl_mem handle;
-};
-
 
 class OpenCLprog {
 public:
@@ -73,11 +54,6 @@ private:
   cl_kernel kern;
 };
 
-template<>
-inline int OpenCLprog::setArg(cl_uint argIndex, const OpenCLmem& mem) {
-  return setArg(argIndex, mem.getHandle());
-}
-
 class OpenCLevent {
 public:
   OpenCLevent() {}
@@ -121,11 +97,10 @@ public:
 
   // writeBuffer does a blocking write
   template<typename T>
-  int writeBuffer(OpenCLmem& mem, const std::vector<T>& src, size_t offset = 0)
-  {
-    cl_int v = clEnqueueWriteBuffer(
-        handle, mem.getHandle(), CL_TRUE /*blocking*/, offset,
-        sizeof(src[0]) * src.size(), reinterpret_cast<const void*>(src.data()),
+  int writeBuffer(cl_mem hnd, const std::vector<T>& src, size_t offset = 0) {
+    size_t srcSize = sizeof(src[0]) * src.size();
+    cl_int v = clEnqueueWriteBuffer(handle, hnd, CL_TRUE /*blocking*/,
+        offset * srcSize, srcSize, reinterpret_cast<const void*>(src.data()),
         0, NULL, NULL);
     if (v != CL_SUCCESS) {
       fprintf(stderr, "%s failed: %d %s\n", "clEnqueueWriteBuffer", v,
@@ -137,10 +112,10 @@ public:
 
   // readBuffer does a blocking read
   template<typename T>
-  int readBuffer(OpenCLmem& mem, std::vector<T>& dst, size_t offset = 0) {
-    cl_int v = clEnqueueReadBuffer(
-        handle, mem.getHandle(), CL_TRUE /*blocking*/, offset,
-        sizeof(dst[0]) * dst.size(), reinterpret_cast<void*>(dst.data()),
+  int readBuffer(cl_mem hnd, std::vector<T>& dst, size_t offset = 0) {
+    size_t dstSize = sizeof(dst[0]) * dst.size();
+    cl_int v = clEnqueueReadBuffer(handle, hnd, CL_TRUE /*blocking*/,
+        offset * dstSize, dstSize, reinterpret_cast<void*>(dst.data()),
         0, NULL, NULL);
     if (v != CL_SUCCESS) {
       fprintf(stderr, "%s failed: %d %s\n", "clEnqueueReadBuffer", v,
@@ -184,5 +159,70 @@ public:
 private:
   cl_command_queue handle;
 };
+
+class OpenCLmem {
+public:
+  OpenCLmem(OpenCLdev& dev) : dev(dev), handle(NULL) {}
+  virtual ~OpenCLmem() {
+    if (handle) {
+      clReleaseMemObject(handle);
+      handle = NULL;
+    }
+  }
+  OpenCLdev& dev;
+
+  int create(cl_mem_flags flags, size_t size);
+
+  template<typename T>
+  int createInput(OpenCLqueue& q, std::vector<T>& in, size_t copies = 1) {
+    if (create(CL_MEM_READ_ONLY, sizeof(in[0]) * in.size() * copies)) {
+      fprintf(stderr, "createInput failed\n");
+      return 1;
+    }
+    if (copies == 1) {
+      if (q.writeBuffer(getHandle(), in)) {
+        fprintf(stderr, "createInput: writeBuffer failed\n");
+        return 1;
+      }
+    }
+    return 0;
+  }
+
+  template<typename T>
+  int createIO(OpenCLqueue& q, std::vector<T>& in, size_t copies = 1) {
+    if (create(CL_MEM_READ_WRITE, sizeof(in[0]) * in.size() * copies)) {
+      fprintf(stderr, "createIO failed\n");
+      return 1;
+    }
+    if (copies == 1) {
+      if (q.writeBuffer(getHandle(), in)) {
+        fprintf(stderr, "createIO: writeBuffer failed\n");
+        return 1;
+      }
+    }
+    return 0;
+  }
+
+  template<typename T>
+  int createOutput(std::vector<T>& out) {
+    // The OpenCLqueue::readBuffer() call is done using copyTo, below.
+    return create(CL_MEM_WRITE_ONLY, sizeof(out[0]) * out.size());
+  }
+
+  template<typename T>
+  int copyTo(OpenCLqueue& q, std::vector<T>& out) {
+    return q.readBuffer(getHandle(), out);
+  }
+
+  cl_mem getHandle() const { return handle; }
+
+private:
+  cl_mem handle;
+};
+
+template<>
+inline int OpenCLprog::setArg(cl_uint argIndex, const OpenCLmem& mem) {
+  return setArg(argIndex, mem.getHandle());
+}
 
 }  // namespace git-mine

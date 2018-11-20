@@ -16,6 +16,20 @@ int OpenCLmem::create(cl_mem_flags flags, size_t size) {
   return 0;
 }
 
+static int printBuildLog(char* log) {
+  if (!log) {
+    return 0;
+  }
+  if (strspn(log, "\r\n") != strlen(log)) {
+    fprintf(stderr, "%s", log);
+    if (strlen(log) && log[strlen(log) - 1] != '\n') {
+      fprintf(stderr, "\n");
+    }
+  }
+  free(log);
+  return 0;
+}
+
 int OpenCLprog::open(const char* mainFuncName) {
   if (prog) {
     fprintf(stderr, "validation: OpenCLprog::open called twice\n");
@@ -30,14 +44,13 @@ int OpenCLprog::open(const char* mainFuncName) {
     return 1;
   }
 
-  v = clBuildProgram(prog, 1, &dev.devId, "", NULL, NULL);
+  v = clBuildProgram(prog, 1, &dev.devId, "-cl-nv-verbose", NULL, NULL);
   if (v != CL_SUCCESS) {
     fprintf(stderr, "%s failed: %d %s\n", "clBuildProgram", v, clerrstr(v));
-    char* buildLog = getBuildLog();
-    if (buildLog) {
-      fprintf(stderr, "%s", buildLog);
-      free(buildLog);
-    }
+    (void)printBuildLog(getBuildLog());
+    return 1;
+  }
+  if (printBuildLog(getBuildLog())) {
     return 1;
   }
 

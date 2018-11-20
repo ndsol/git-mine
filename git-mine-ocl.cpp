@@ -11,21 +11,22 @@ int testOpenCL2(OpenCLdev& dev, OpenCLprog& p) {
   int factor = 2;
 
   OpenCLmem inbuf(dev);
-  if (inbuf.create(CL_MEM_READ_ONLY, sizeof(numbers[0]) * numbers.size()) ||
-      p.setArg(0, inbuf)) {
+  OpenCLmem outbuf(dev);
+  OpenCLqueue q(dev);
+  if (q.open() || inbuf.createInput(q, numbers)) {
+    fprintf(stderr, "q.open or inbuf.createInput failed\n");
     return 1;
   }
-  OpenCLmem outbuf(dev);
-  if (outbuf.create(CL_MEM_WRITE_ONLY, sizeof(numbers[0]) * numbers.size()) ||
-      p.setArg(1, outbuf) ||
-      p.setArg(2, factor)) {
+  std::vector<int> donenumbers(numbers.size());
+  if (outbuf.createOutput(donenumbers)) {
+    fprintf(stderr, "outbuf.createOutput failed\n");
+    return 1;
+  }
+  if (p.setArg(0, inbuf) || p.setArg(1, outbuf) || p.setArg(2, factor)) {
+    fprintf(stderr, "p.setArg failed\n");
     return 1;
   }
 
-  OpenCLqueue q(dev);
-  if (q.open() || q.writeBuffer(inbuf, numbers)) {
-    return 1;
-  }
   OpenCLevent completeEvent;
   std::vector<size_t> global_work_size{ numbers.size() };
   if (q.NDRangeKernel(p, global_work_size.size(), NULL, 
@@ -34,8 +35,8 @@ int testOpenCL2(OpenCLdev& dev, OpenCLprog& p) {
   }
   completeEvent.waitForSignal();
 
-  std::vector<int> donenumbers(numbers.size());
-  if (q.readBuffer(outbuf, donenumbers)) {
+  if (outbuf.copyTo(q, donenumbers) || q.finish()) {
+    fprintf(stderr, "outbuf.copyTo or finish failed\n");
     return 1;
   }
   fprintf(stderr, "checking:\n");
@@ -45,7 +46,7 @@ int testOpenCL2(OpenCLdev& dev, OpenCLprog& p) {
               donenumbers.at(i));
     }
   }
-  return q.finish();
+  return 0;
 }
 
 int testOpenCL(OpenCLdev& dev, const CommitMessage& commit) {
@@ -78,53 +79,8 @@ int testOpenCL(OpenCLdev& dev, const CommitMessage& commit) {
   return testOpenCL2(dev, p);
 }
 
-int findHash2(OpenCLdev& dev, OpenCLprog& p, const CommitMessage& commit) {
-  std::string s = commit.parent + commit.author +
-      commit.author_time + commit.author_tz + commit.committer +
-      commit.committer_time + commit.committer_tz + commit.log;
-  Sha1Hash sha;
-  sha.update(commit.header.data(), commit.header.size());
-  sha.update(s.c_str(), s.size());
-  sha.flush();
-  char shabuf[1024];
-  if (sha.dump(shabuf, sizeof(shabuf))) {
-    return 1;
-  }
-
-  std::vector<char> buf(commit.header.data(),
-                        commit.header.data() + commit.header.size());
-  buf.insert(buf.end(), s.c_str(), s.c_str() + s.size());
-
-  Sha1Hash gpusha;
-  if (testGPUsha1(dev, p, buf, gpusha)) {
-    fprintf(stderr, "testGPUsha1 failed\n");
-    return 1;
-  }
-  if (memcmp(gpusha.result, sha.result, sizeof(sha.result))) {
-    fprintf(stderr, "CPU sha1: %s\n", shabuf);
-    if (gpusha.dump(shabuf, sizeof(shabuf))) {
-      return 1;
-    }
-    fprintf(stderr, "GPU sha1: %s - mismatch!\n", shabuf);
-    return 1;
-  }
-
-  Blake2Hash b2h;
-  b2h.update(buf.data(), buf.size());
-  b2h.flush();
-  if (b2h.dump(shabuf, sizeof(shabuf))) {
-    return 1;
-  }
-  fprintf(stderr, "CPU blake2: %s\n", shabuf);
-
-  if (findOnGPU(dev, p, buf, gpusha)) {
-    fprintf(stderr, "findOnGPU failed\n");
-    return 1;
-  }
-  return 0;
-}
-
-int findHash(OpenCLdev& dev, const CommitMessage& commit) {
+int findHash(OpenCLdev& dev, const CommitMessage& commit,
+             long long atime_hint, long long ctime_hint) {
   FILE* f = fopen("/usr/local/google/home/dsp/restore/git-mine/sha1.cl", "r");
   if (!f) {
     fprintf(stderr, "Unable to read OpenCL source: %d %s\n", errno,
@@ -151,10 +107,16 @@ int findHash(OpenCLdev& dev, const CommitMessage& commit) {
   }
   dev.unloadPlatformCompiler();
   free(codeBuf);
-  return findHash2(dev, p, commit);
+
+  if (findOnGPU(dev, p, commit, atime_hint, ctime_hint)) {
+    fprintf(stderr, "findOnGPU failed\n");
+    return 1;
+  }
+  return 0;
 }
 
-int runOCL(const CommitMessage& commit) {
+int runOCL(const CommitMessage& commit, long long atime_hint,
+           long long ctime_hint) {
   std::vector<cl_platform_id> platforms;
   if (getPlatforms(platforms)) {
     return 1;
@@ -200,7 +162,8 @@ int runOCL(const CommitMessage& commit) {
       reinterpret_cast<cl_context_properties>(platforms.at(i)),
       0, 0,
     };
-    if (dev.openCtx(ctxProps) || findHash(dev, commit)) {
+    if (dev.openCtx(ctxProps) ||
+        findHash(dev, commit, atime_hint, ctime_hint)) {
       return 1;
     }
   }
@@ -210,11 +173,27 @@ int runOCL(const CommitMessage& commit) {
 }  // namespace git-mine
 
 int main(int argc, char ** argv) {
-  if (argc != 1) {
+  if (argc != 3 && argc != 1) {
     // This utility must be called from a post-commit hook
     // with $GIT_TOPLEVEL as the only argument.
-    fprintf(stderr, "Usage: %s\n", argv[0]);
+    fprintf(stderr, "Usage: %s [ atime_hint ctime_hint ]\n",
+            argv[0]);
     return 1;
+  }
+  long long atime_hint = 0;
+  long long ctime_hint = 0;
+  if (argc == 3) {
+    int n;
+    if (sscanf(argv[1], "%lld%n", &atime_hint, &n) != 1 ||
+        (int)strlen(argv[1]) != n) {
+      fprintf(stderr, "Invalid atime_hint: \"%s\"\n", argv[2]);
+      return 1;
+    }
+    if (sscanf(argv[2], "%lld%n", &ctime_hint, &n) != 1 ||
+        (int)strlen(argv[2]) != n) {
+      fprintf(stderr, "Invalid ctime_hint: \"%s\"\n", argv[2]);
+      return 1;
+    }
   }
 
   CommitMessage commit;
@@ -238,7 +217,7 @@ int main(int argc, char ** argv) {
     if (b2h.dump(buf, sizeof(buf))) {
       return 1;
     }
-    fprintf(stderr, "blake2: %s\n", buf);
+    fprintf(stderr, "blake2: %.*s...%s\n", 20, buf, buf + 108);
     static const char* wantsha = "68d1800069d0d0f098d151560a5c62049113da1f";
     if (strcmp(shabuf, wantsha)) {
       fprintf(stderr, "sha1 want: %s\n", wantsha);
@@ -252,5 +231,5 @@ int main(int argc, char ** argv) {
     }
   }
 
-  return gitmine::runOCL(commit);
+  return gitmine::runOCL(commit, atime_hint, ctime_hint);
 }
