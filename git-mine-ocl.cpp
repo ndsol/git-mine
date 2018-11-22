@@ -100,15 +100,15 @@ int findHash(OpenCLdev& dev, const CommitMessage& commit,
   }
   fclose(f);
   codeBuf[rresult] = 0;
-  OpenCLprog p(codeBuf, dev);
-  if (p.open("main")) {
+  OpenCLprog prog(codeBuf, dev);
+  if (prog.open("main")) {
     fprintf(stderr, "open(main) failed\n");
     return 1;
   }
   dev.unloadPlatformCompiler();
   free(codeBuf);
 
-  if (findOnGPU(dev, p, commit, atime_hint, ctime_hint)) {
+  if (findOnGPU(dev, prog, commit, atime_hint, ctime_hint)) {
     fprintf(stderr, "findOnGPU failed\n");
     return 1;
   }

@@ -95,13 +95,27 @@ public:
     return 0;
   }
 
-  // writeBuffer does a blocking write
+  // writeBuffer does a non-blocking write
   template<typename T>
-  int writeBuffer(cl_mem hnd, const std::vector<T>& src, size_t offset = 0) {
-    size_t srcSize = sizeof(src[0]) * src.size();
+  int writeBuffer(cl_mem hnd, const std::vector<T>& src) {
     cl_int v = clEnqueueWriteBuffer(handle, hnd, CL_TRUE /*blocking*/,
-        offset * srcSize, srcSize, reinterpret_cast<const void*>(src.data()),
-        0, NULL, NULL);
+        0 /*offset*/, sizeof(src[0]) * src.size(),
+        reinterpret_cast<const void*>(src.data()), 0, NULL, NULL);
+    if (v != CL_SUCCESS) {
+      fprintf(stderr, "%s failed: %d %s\n", "clEnqueueWriteBuffer", v,
+              clerrstr(v));
+      return 1;
+    }
+    return 0;
+  }
+
+  // writeBuffer does a non-blocking write and outputs the cl_event that
+  // will be signalled when it completes.
+  template<typename T>
+  int writeBuffer(cl_mem hnd, const std::vector<T>& src, cl_event& complete) {
+    cl_int v = clEnqueueWriteBuffer(handle, hnd, CL_TRUE /*blocking*/,
+        0 /*offset*/, sizeof(src[0]) * src.size(),
+        reinterpret_cast<const void*>(src.data()), 0, NULL, &complete);
     if (v != CL_SUCCESS) {
       fprintf(stderr, "%s failed: %d %s\n", "clEnqueueWriteBuffer", v,
               clerrstr(v));
@@ -112,11 +126,24 @@ public:
 
   // readBuffer does a blocking read
   template<typename T>
-  int readBuffer(cl_mem hnd, std::vector<T>& dst, size_t offset = 0) {
-    size_t dstSize = sizeof(dst[0]) * dst.size();
+  int readBuffer(cl_mem hnd, std::vector<T>& dst) {
     cl_int v = clEnqueueReadBuffer(handle, hnd, CL_TRUE /*blocking*/,
-        offset * dstSize, dstSize, reinterpret_cast<void*>(dst.data()),
-        0, NULL, NULL);
+        0 /*offset*/, sizeof(dst[0]) * dst.size(),
+        reinterpret_cast<void*>(dst.data()), 0, NULL, NULL);
+    if (v != CL_SUCCESS) {
+      fprintf(stderr, "%s failed: %d %s\n", "clEnqueueReadBuffer", v,
+              clerrstr(v));
+      return 1;
+    }
+    return 0;
+  }
+
+  // readBufferNonBlock does a non-blocking read
+  template<typename T>
+  int readBufferNonBlock(cl_mem hnd, std::vector<T>& dst, cl_event& complete) {
+    cl_int v = clEnqueueReadBuffer(handle, hnd, CL_TRUE /*blocking*/,
+        0 /*offset*/, sizeof(dst[0]) * dst.size(),
+        reinterpret_cast<void*>(dst.data()), 0, NULL, &complete);
     if (v != CL_SUCCESS) {
       fprintf(stderr, "%s failed: %d %s\n", "clEnqueueReadBuffer", v,
               clerrstr(v));
@@ -212,6 +239,11 @@ public:
   template<typename T>
   int copyTo(OpenCLqueue& q, std::vector<T>& out) {
     return q.readBuffer(getHandle(), out);
+  }
+
+  template<typename T>
+  int copyTo(OpenCLqueue& q, std::vector<T>& out, OpenCLevent& completeEvent) {
+    return q.readBufferNonBlock(getHandle(), out, completeEvent.handle);
   }
 
   cl_mem getHandle() const { return handle; }

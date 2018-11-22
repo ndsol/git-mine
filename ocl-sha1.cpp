@@ -9,6 +9,7 @@
 #include "ocl-device.h"
 #include "ocl-program.h"
 #include "hashapi.h"
+#include <chrono>
 
 namespace gitmine {
 
@@ -83,7 +84,8 @@ struct B2SHAstate {
 struct CPUprep {
   CPUprep(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit)
       : dev(dev), prog(prog), q(dev), commit(commit), gpufixed(dev)
-      , gpustate(dev), gpubuf(dev), fixed(1), atime_hint(0), ctime_hint(0) {}
+      , gpustate(dev), gpubuf(dev), fixed(1), atime_hint(0), ctime_hint(0)
+      , testOnly(0) {}
 
   OpenCLdev& dev;
   OpenCLprog& prog;
@@ -93,11 +95,15 @@ struct CPUprep {
   OpenCLmem gpufixed;
   OpenCLmem gpustate;
   OpenCLmem gpubuf;
+  OpenCLevent writtenEvent;
   OpenCLevent completeEvent;
   std::vector<B2SHAstate> state;
+  std::vector<B2SHAstate> result;
   std::vector<B2SHAconst> fixed;
+  std::vector<B2SHAbuffer> cpubuf;
   long long atime_hint;
   long long ctime_hint;
+  int testOnly;
 
   int init() {
     if (q.open()) {
@@ -113,6 +119,7 @@ struct CPUprep {
       fprintf(stderr, "BUG: fixed.size=%zu\n", fixed.size());
       return 1;
     }
+    result.resize(state.size());
 
     if (atime_hint < commit.author_btime) {
       if (atime_hint) {
@@ -129,110 +136,79 @@ struct CPUprep {
       ctime_hint = commit.committer_btime;
     }
     // Adjust atime across the range atime_work.
-    // Then, if no match is found, bump ctime and try again.
+    // If no match is found, findOnGpu() will increment ctime and try again.
     long long atime_work = ctime_hint - atime_hint;
-
-    // buf contains the raw commit bytes.
     CommitMessage noodle(commit);
-    noodle.author_btime = atime_hint;
-    noodle.author_time = std::to_string(atime_hint);
-    noodle.committer_btime = ctime_hint;
-    noodle.committer_time = std::to_string(ctime_hint);
-    std::vector<char> buf(noodle.header.data(),
-                          noodle.header.data() + noodle.header.size());
-    std::string s = noodle.toRawString();
-    buf.insert(buf.end(), s.c_str(), s.c_str() + s.size());
+    cpubuf.clear();
+    for (size_t i = 0; i < state.size(); i++) {
+      long long atime = commit.author_btime;
+      float workMax = state.size();
+      long long my_work_start = (float(i) * atime_work) / workMax;
+      long long my_work_end = (float(i + 1) * atime_work) / workMax;
+      noodle.author_btime = atime + my_work_start;
+      noodle.author_time = std::to_string(noodle.author_btime);
 
-    // First copy buf into B2SHAbuffer-sized chunks on the CPU.
-    std::vector<B2SHAbuffer> cpubuf;
-    for (size_t i = 0; i < buf.size(); ) {
-      cpubuf.emplace_back();
-      size_t len = sizeof(B2SHAbuffer);
-      if (buf.size() - i < len) {
-        len = buf.size() - i;
-        memset(&cpubuf.back(), 0, sizeof(B2SHAbuffer));
+      noodle.committer_btime = ctime_hint;
+      noodle.committer_time = std::to_string(ctime_hint);
+
+      // counterPos points to the last digit in author.
+      state.at(i).counterPos = noodle.header.size() + noodle.parent.size() +
+                              noodle.author.size() + noodle.author_time.size()
+                              - 1;
+      state.at(i).counts = (uint32_t) (my_work_end - my_work_start);
+      if (testOnly) {
+        state.at(i).counts = 1;
       }
-      memcpy(&cpubuf.back(), &buf.at(i), len);
-      i += len;
-    }
-    if (cpubuf.size() != (buf.size() + sizeof(B2SHAbuffer) - 1) /
-                        sizeof(B2SHAbuffer)) {
-      fprintf(stderr, "BUG: cpubuf %zu, want %zu\n", cpubuf.size(),
-              buf.size() / sizeof(B2SHAbuffer));
-      return 1;
-    }
-    fixed.at(0).len = buf.size();
-    fixed.at(0).bytesRemaining = buf.size();
-    fixed.at(0).buffers = cpubuf.size();
 
-    // Now with cpubuf.size() ready, create gpubuf.
+      // buf contains the raw commit bytes.
+      std::vector<char> buf(noodle.header.data(),
+                            noodle.header.data() + noodle.header.size());
+      {
+        std::string s = noodle.toRawString();
+        buf.insert(buf.end(), s.c_str(), s.c_str() + s.size());
+      }
+      if (i != 0 && buf.size() != fixed.at(0).len) {
+        fprintf(stderr, "BUG: buf.size %zu, want %u\n", buf.size(),
+                fixed.at(0).len);
+        return 1;
+      }
+
+      // First copy buf into B2SHAbuffer-sized chunks on the CPU.
+      for (size_t i = 0; i < buf.size(); ) {
+        cpubuf.emplace_back();
+        size_t len = sizeof(B2SHAbuffer);
+        if (buf.size() - i < len) {
+          len = buf.size() - i;
+          memset(&cpubuf.back(), 0, sizeof(B2SHAbuffer));
+        }
+        memcpy(&cpubuf.back(), &buf.at(i), len);
+        i += len;
+      }
+
+      if (i == 0) {
+        // Use buf to find fixed parameters.
+        if (cpubuf.size() != (buf.size() + sizeof(B2SHAbuffer) - 1) /
+                            sizeof(B2SHAbuffer)) {
+          fprintf(stderr, "BUG: cpubuf %zu, want %zu\n", cpubuf.size(),
+                  buf.size() / sizeof(B2SHAbuffer));
+          return 1;
+        }
+        fixed.at(0).len = buf.size();
+        fixed.at(0).bytesRemaining = buf.size();
+        fixed.at(0).buffers = cpubuf.size();
+      }
+    }
+
+    // Now create gpubuf and copy cpubuf to it.
     if (gpubuf.getHandle()) {
       // gpubuf already created.
-      if (state.size() == 1 && q.writeBuffer(gpubuf.getHandle(), cpubuf)) {
+      if (q.writeBuffer(gpubuf.getHandle(), cpubuf)) {
         fprintf(stderr, "writeBuffer(gpubuf) failed while resetting gpubuf\n");
         return 1;
       }
-    } else if (gpubuf.createIO(q, cpubuf, state.size())) {
+    } else if (gpubuf.createIO(q, cpubuf)) {
       fprintf(stderr, "gpubuf.createInput failed\n");
       return 1;
-    }
-    if (state.size() > 1) {
-      state.at(0).counterPos = noodle.header.size() + noodle.parent.size() +
-                               noodle.author.size() + noodle.author_time.size()
-                               - 1;
-      state.at(0).counts = float(atime_work) / float(state.size());
-      static const uint64_t maxCounts = 2048;
-      if (state.at(0).counts > maxCounts) {
-        fprintf(stderr, "not enough workers: %lu > %lu\n", state.at(0).counts,
-                maxCounts);
-        return 1;
-      }
-      // Copy cpubuf to gpubuf.
-      size_t i = 0;
-      for (;;) {
-        if (q.writeBuffer(gpubuf.getHandle(), cpubuf, i)) {
-          fprintf(stderr, "buildGPUbuf: writeBuffer[%zu] failed\n", i);
-          return 1;
-        }
-        i++;
-        if (i >= state.size()) break;
-        // Build a cpubuf for this worker. This code only runs for i > 0.
-        long long atime = commit.author_btime;
-        float workMax = state.size();
-        long long my_work_start = (float(i) * atime_work) / workMax;
-        long long my_work_end = (float(i + 1) * atime_work) / workMax;
-        noodle.author_btime = atime + my_work_start;
-        noodle.author_time = std::to_string(noodle.author_btime);
-        noodle.committer_btime = ctime_hint;
-        noodle.committer_time = std::to_string(ctime_hint);
-        // counterPos points to the last digit in author.
-        state.at(i).counterPos = noodle.header.size() + noodle.parent.size() +
-                               noodle.author.size() + noodle.author_time.size()
-                               - 1;
-        state.at(i).counts = (uint32_t) (my_work_end - my_work_start);
-
-        buf.clear();
-        buf.insert(buf.end(), noodle.header.data(),
-                  noodle.header.data() + noodle.header.size());
-        s = noodle.toRawString();
-        buf.insert(buf.end(), s.c_str(), s.c_str() + s.size());
-        if (buf.size() != fixed.at(0).len) {
-          fprintf(stderr, "BUG: buf.size %zu, want %u\n", buf.size(),
-                  fixed.at(0).len);
-          return 1;
-        }
-        cpubuf.clear();
-        for (size_t i = 0; i < buf.size(); ) {
-          cpubuf.emplace_back();
-          size_t len = sizeof(B2SHAbuffer);
-          if (buf.size() - i < len) {
-            len = buf.size() - i;
-            memset(&cpubuf.back(), 0, sizeof(B2SHAbuffer));
-          }
-          memcpy(&cpubuf.back(), &buf.at(i), len);
-          i += len;
-        }
-      }
     }
 
     // Copy fixed and state to GPU.
@@ -242,19 +218,26 @@ struct CPUprep {
         return 1;
       }
       // gpufixed and gpustate already created.
-      if (q.writeBuffer(gpufixed.getHandle(), fixed) ||
-          q.writeBuffer(gpustate.getHandle(), state)) {
-        fprintf(stderr, "writeBuffer(gpufixed or gpustate) failed\n");
+      if (q.writeBuffer(gpustate.getHandle(), state)) {
+        fprintf(stderr, "writeBuffer(gpustate) failed\n");
         return 1;
       }
-    } else if (gpufixed.createInput(q, fixed) || gpustate.createIO(q, state)) {
-      fprintf(stderr, "gpufixed or gpustate failed\n");
-      return 1;
+    } else {
+      if (gpufixed.createInput(q, fixed) || gpustate.createIO(q, state)) {
+        fprintf(stderr, "gpufixed or gpustate failed\n");
+        return 1;
+      }
+      // Set program arguments.
+      if (prog.setArg(0, gpufixed) || prog.setArg(1, gpustate) ||
+          prog.setArg(2, gpubuf)) {
+        fprintf(stderr, "prog.setArg failed\n");
+        return 1;
+      }
     }
-    // Set program arguments.
-    if (prog.setArg(0, gpufixed) || prog.setArg(1, gpustate) ||
-        prog.setArg(2, gpubuf)) {
-      fprintf(stderr, "prog.setArg failed\n");
+    // Unconditionally write gpufixed (duplicated if gpufixed.createInput
+    // was just called). This gets writtenEvent, to optionally be waited on.
+    if (q.writeBuffer(gpufixed.getHandle(), fixed, writtenEvent.handle)) {
+      fprintf(stderr, "writeBuffer(gpufixed) failed\n");
       return 1;
     }
     return 0;
@@ -262,9 +245,12 @@ struct CPUprep {
 
   int start(const std::vector<size_t>& global_work_size) {
     if (q.NDRangeKernel(prog, global_work_size.size(), NULL, 
-                        global_work_size.data(), NULL,
-                        &completeEvent.handle)) {
+                        global_work_size.data(), NULL, NULL)) {
       fprintf(stderr, "NDRangeKernel failed\n");
+      return 1;
+    }
+    if (gpustate.copyTo(q, result, completeEvent)) {
+      fprintf(stderr, "gpustate.copyTo or finish failed\n");
       return 1;
     }
     return 0;
@@ -272,11 +258,10 @@ struct CPUprep {
 
   int wait() {
     completeEvent.waitForSignal();
-
-    if (gpustate.copyTo(q, state) || q.finish()) {
-      fprintf(stderr, "gpustate.copyTo or finish failed\n");
-      return 1;
-    }
+    return 0;
+  }
+  int waitWritten() {
+    writtenEvent.waitForSignal();
     return 0;
   }
 };
@@ -287,6 +272,7 @@ static int testGPUsha1(OpenCLdev& dev, OpenCLprog& prog,
   CPUprep prep(dev, prog, commit);
   prep.state.resize(1);
   // Defaults for state.at(0) do not need to be modified.
+  prep.testOnly = 1;
 
   Sha1Hash cpusha;
   cpusha.update(commit.header.data(), commit.header.size());
@@ -303,7 +289,7 @@ static int testGPUsha1(OpenCLdev& dev, OpenCLprog& prog,
     return 1;
   }
   Sha1Hash shaout;
-  memcpy(shaout.result, prep.state.at(0).hash, sizeof(shaout.result));
+  memcpy(shaout.result, prep.result.at(0).hash, sizeof(shaout.result));
 
   if (memcmp(shaout.result, cpusha.result, sizeof(cpusha.result))) {
     char shabuf[1024];
@@ -332,7 +318,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
   prep.ctime_hint = ctime_hint;
 
   // Set context for each worker.
-  static const size_t numWorkers = 512*3;
+  static const size_t numWorkers = 2048*3;
   for (size_t i = 0; i < numWorkers; i++) {
     prep.state.emplace_back();
   }
@@ -341,15 +327,39 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     fprintf(stderr, "prep.init failed\n");
     return 1;
   }
+  if (prep.buildGPUbuf()) {
+    fprintf(stderr, "first buildGPUbuf failed\n");
+    return 1;
+  }
+
+  typedef std::chrono::steady_clock Clock;
+  auto t0 = Clock::now();
+  long long last_work = 0;
   size_t good = 0;
   while (!good) {
-    fprintf(stderr, "try ctime %lld\n", prep.ctime_hint);
-    if (prep.buildGPUbuf()) {
-      fprintf(stderr, "buildGPUbuf failed\n");
-      return 1;
+    auto t1 = Clock::now();
+    std::chrono::duration<float> sec_duration = t1 - t0;
+    float sec = sec_duration.count();
+
+    float r = 0.0f;
+    if (sec > 0.95f) {
+      t0 = t1;
+      r = float(last_work)/sec * 1e-6;
+      last_work = 0;
+      fprintf(stderr, "%.1fs %6.3fM/s try ctime %lld\n", sec, r,
+              prep.ctime_hint);
     }
     if (prep.start({ prep.state.size() })) {
       fprintf(stderr, "prep.start failed\n");
+      return 1;
+    }
+    atime_hint = prep.atime_hint;
+    ctime_hint = prep.ctime_hint;
+    // Preemptively start building the next batch of work. This lets the CPU
+    // be busy while the GPU is also busy.
+    prep.ctime_hint++;
+    if (prep.waitWritten() || prep.buildGPUbuf()) {
+      fprintf(stderr, "waitWritten or next buildGPUbuf failed\n");
       return 1;
     }
     if (prep.wait()) {
@@ -357,15 +367,14 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       return 1;
     }
 
-    atime_hint = prep.atime_hint;
-    ctime_hint = prep.ctime_hint;
     long long atime_work = ctime_hint - atime_hint;
+    last_work += atime_work;
     float workMax = prep.state.size();
     for (size_t i = 0; i < prep.state.size(); i++) {
-      if (prep.state.at(i).matchLen == MIN_MATCH_LEN) {
+      if (prep.result.at(i).matchLen == MIN_MATCH_LEN) {
         continue;
       }
-      uint64_t matchCount = prep.state.at(i).matchCount;
+      uint64_t matchCount = prep.result.at(i).matchCount;
       CommitMessage noodle(commit);
       long long atime = commit.author_btime;
       long long my_work_end = (float(i + 1) * atime_work) / workMax;
@@ -374,7 +383,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       noodle.committer_btime = ctime_hint;
       noodle.committer_time = std::to_string(ctime_hint);
       fprintf(stderr, "%zu match=%u bytes  atime=%lld  ctime=%lld\n",
-              i, prep.state.at(i).matchLen, noodle.author_btime,
+              i, prep.result.at(i).matchLen, noodle.author_btime,
               noodle.committer_btime);
 
       Sha1Hash shaout;
@@ -386,20 +395,20 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
         return 1;
       }
       fprintf(stderr, "%zu sha1: \e[1;31m%.*s\e[0m%s\n", i,
-              prep.state.at(i).matchLen * 2, shabuf,
-              &shabuf[prep.state.at(i).matchLen * 2]);
+              prep.result.at(i).matchLen * 2, shabuf,
+              &shabuf[prep.result.at(i).matchLen * 2]);
       char b2hbuf[1024];
       if (b2h.dump(b2hbuf, sizeof(b2hbuf))) {
         fprintf(stderr, "b2h.dump failed in findOnGPU\n");
         return 1;
       }
-      shabuf[prep.state.at(i).matchLen * 2] = 0;
+      shabuf[prep.result.at(i).matchLen * 2] = 0;
       char* b2hpos = strstr(b2hbuf, shabuf);
       if (b2hpos) {
         good++;
       }
       int b2hlen = b2hpos ? (b2hpos - b2hbuf) : strlen(b2hbuf);
-      int b2hMatchLen = prep.state.at(i).matchLen * 2;
+      int b2hMatchLen = prep.result.at(i).matchLen * 2;
       if (b2hlen + b2hMatchLen > (int)strlen(b2hbuf)) {
         b2hMatchLen = strlen(b2hbuf) - b2hlen;
       }
@@ -407,7 +416,10 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
               b2hbuf, b2hMatchLen, &b2hbuf[b2hlen],
               &b2hbuf[b2hlen + b2hMatchLen]);
     }
-    prep.ctime_hint++;
+  }
+  if (prep.q.finish()) {
+    fprintf(stderr, "prep.q.finish failed\n");
+    return 1;
   }
   return 0;
 }
