@@ -360,7 +360,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     float sec = sec_duration.count();
 
     float r = 0.0f;
-    if (sec > 1e-6) {
+    if (sec > 0.95f) {
       t0 = t1;
       r = float(last_work)/sec * 1e-6;
       last_work = 0;

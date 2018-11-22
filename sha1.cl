@@ -107,123 +107,164 @@ unsigned int swap(unsigned int val) {
   ApplySHA1func(f, a, b, c, d, e, k, x); \
 }
 
-static void sha1_process2(const unsigned int *W, unsigned int *digest) {
+static void sha1_process2(unsigned int *W, unsigned int *digest) {
+#define LOCAL_WORK_VARS
+#ifdef LOCAL_WORK_VARS
   unsigned int A = digest[0];
   unsigned int B = digest[1];
   unsigned int C = digest[2];
   unsigned int D = digest[3];
   unsigned int E = digest[4];
+#else
+  #define A W[17]
+  #define B W[18]
+  #define C W[19]
+  #define D W[20]
+  #define E W[21]
+  A = digest[0];
+  B = digest[1];
+  C = digest[2];
+  D = digest[3];
+  E = digest[4];
+#endif
 
-  unsigned int w0_t = W[0];
-  unsigned int w1_t = W[1];
-  unsigned int w2_t = W[2];
-  unsigned int w3_t = W[3];
-  unsigned int w4_t = W[4];
-  unsigned int w5_t = W[5];
-  unsigned int w6_t = W[6];
-  unsigned int w7_t = W[7];
-  unsigned int w8_t = W[8];
-  unsigned int w9_t = W[9];
-  unsigned int wa_t = W[10];
-  unsigned int wb_t = W[11];
-  unsigned int wc_t = W[12];
-  unsigned int wd_t = W[13];
-  unsigned int we_t = W[14];
-  unsigned int wf_t = W[15];
+  #define w0_t W[0]
+  #define w1_t W[1]
+  #define w2_t W[2]
+  #define w3_t W[3]
+  #define w4_t W[4]
+  #define w5_t W[5]
+  #define w6_t W[6]
+  #define w7_t W[7]
+  #define w8_t W[8]
+  #define w9_t W[9]
+  #define wa_t W[10]
+  #define wb_t W[11]
+  #define wc_t W[12]
+  #define wd_t W[13]
+  #define we_t W[14]
+  #define wf_t W[15]
 
   // Round 1 - loop unrolled.
-  ApplySHA1func(F1, A, B, C, D, E, SHA1C00, w0_t);
-  ApplySHA1func(F1, E, A, B, C, D, SHA1C00, w1_t);
-  ApplySHA1func(F1, D, E, A, B, C, SHA1C00, w2_t);
-  ApplySHA1func(F1, C, D, E, A, B, SHA1C00, w3_t);
-  ApplySHA1func(F1, B, C, D, E, A, SHA1C00, w4_t);
-  ApplySHA1func(F1, A, B, C, D, E, SHA1C00, w5_t);
-  ApplySHA1func(F1, E, A, B, C, D, SHA1C00, w6_t);
-  ApplySHA1func(F1, D, E, A, B, C, SHA1C00, w7_t);
-  ApplySHA1func(F1, C, D, E, A, B, SHA1C00, w8_t);
-  ApplySHA1func(F1, B, C, D, E, A, SHA1C00, w9_t);
-  ApplySHA1func(F1, A, B, C, D, E, SHA1C00, wa_t);
-  ApplySHA1func(F1, E, A, B, C, D, SHA1C00, wb_t);
-  ApplySHA1func(F1, D, E, A, B, C, SHA1C00, wc_t);
-  ApplySHA1func(F1, C, D, E, A, B, SHA1C00, wd_t);
-  ApplySHA1func(F1, B, C, D, E, A, SHA1C00, we_t);
-  ApplySHA1func(F1, A, B, C, D, E, SHA1C00, wf_t);
-  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F1, E, A, B, C, D, SHA1C00, w0_t);
-  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F1, D, E, A, B, C, SHA1C00, w1_t);
-  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F1, C, D, E, A, B, SHA1C00, w2_t);
-  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F1, B, C, D, E, A, SHA1C00, w3_t);
+  W[16] = SHA1C00;
+  ApplySHA1func(F1, A, B, C, D, E, W[16], w0_t);
+  ApplySHA1func(F1, E, A, B, C, D, W[16], w1_t);
+  ApplySHA1func(F1, D, E, A, B, C, W[16], w2_t);
+  ApplySHA1func(F1, C, D, E, A, B, W[16], w3_t);
+  ApplySHA1func(F1, B, C, D, E, A, W[16], w4_t);
+  ApplySHA1func(F1, A, B, C, D, E, W[16], w5_t);
+  ApplySHA1func(F1, E, A, B, C, D, W[16], w6_t);
+  ApplySHA1func(F1, D, E, A, B, C, W[16], w7_t);
+  ApplySHA1func(F1, C, D, E, A, B, W[16], w8_t);
+  ApplySHA1func(F1, B, C, D, E, A, W[16], w9_t);
+  ApplySHA1func(F1, A, B, C, D, E, W[16], wa_t);
+  ApplySHA1func(F1, E, A, B, C, D, W[16], wb_t);
+  ApplySHA1func(F1, D, E, A, B, C, W[16], wc_t);
+  ApplySHA1func(F1, C, D, E, A, B, W[16], wd_t);
+  ApplySHA1func(F1, B, C, D, E, A, W[16], we_t);
+  ApplySHA1func(F1, A, B, C, D, E, W[16], wf_t);
+  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F1, E, A, B, C, D, W[16], w0_t);
+  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F1, D, E, A, B, C, W[16], w1_t);
+  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F1, C, D, E, A, B, W[16], w2_t);
+  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F1, B, C, D, E, A, W[16], w3_t);
 
   // Round 2 - loop unrolled.
-  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, A, B, C, D, E, SHA1C01, w4_t);
-  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, E, A, B, C, D, SHA1C01, w5_t);
-  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, D, E, A, B, C, SHA1C01, w6_t);
-  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, C, D, E, A, B, SHA1C01, w7_t);
-  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F2, B, C, D, E, A, SHA1C01, w8_t);
-  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F2, A, B, C, D, E, SHA1C01, w9_t);
-  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F2, E, A, B, C, D, SHA1C01, wa_t);
-  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F2, D, E, A, B, C, SHA1C01, wb_t);
-  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, C, D, E, A, B, SHA1C01, wc_t);
-  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, B, C, D, E, A, SHA1C01, wd_t);
-  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, A, B, C, D, E, SHA1C01, we_t);
-  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, E, A, B, C, D, SHA1C01, wf_t);
-  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F2, D, E, A, B, C, SHA1C01, w0_t);
-  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F2, C, D, E, A, B, SHA1C01, w1_t);
-  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F2, B, C, D, E, A, SHA1C01, w2_t);
-  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F2, A, B, C, D, E, SHA1C01, w3_t);
-  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, E, A, B, C, D, SHA1C01, w4_t);
-  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, D, E, A, B, C, SHA1C01, w5_t);
-  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, C, D, E, A, B, SHA1C01, w6_t);
-  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, B, C, D, E, A, SHA1C01, w7_t);
+  W[16] = SHA1C01;
+  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, A, B, C, D, E, W[16], w4_t);
+  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, E, A, B, C, D, W[16], w5_t);
+  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, D, E, A, B, C, W[16], w6_t);
+  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, C, D, E, A, B, W[16], w7_t);
+  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F2, B, C, D, E, A, W[16], w8_t);
+  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F2, A, B, C, D, E, W[16], w9_t);
+  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F2, E, A, B, C, D, W[16], wa_t);
+  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F2, D, E, A, B, C, W[16], wb_t);
+  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, C, D, E, A, B, W[16], wc_t);
+  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, B, C, D, E, A, W[16], wd_t);
+  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, A, B, C, D, E, W[16], we_t);
+  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, E, A, B, C, D, W[16], wf_t);
+  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F2, D, E, A, B, C, W[16], w0_t);
+  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F2, C, D, E, A, B, W[16], w1_t);
+  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F2, B, C, D, E, A, W[16], w2_t);
+  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F2, A, B, C, D, E, W[16], w3_t);
+  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, E, A, B, C, D, W[16], w4_t);
+  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, D, E, A, B, C, W[16], w5_t);
+  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, C, D, E, A, B, W[16], w6_t);
+  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, B, C, D, E, A, W[16], w7_t);
 
   // Round 3 - loop unrolled.
-  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F0, A, B, C, D, E, SHA1C02, w8_t);
-  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F0, E, A, B, C, D, SHA1C02, w9_t);
-  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F0, D, E, A, B, C, SHA1C02, wa_t);
-  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F0, C, D, E, A, B, SHA1C02, wb_t);
-  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F0, B, C, D, E, A, SHA1C02, wc_t);
-  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F0, A, B, C, D, E, SHA1C02, wd_t);
-  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F0, E, A, B, C, D, SHA1C02, we_t);
-  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F0, D, E, A, B, C, SHA1C02, wf_t);
-  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F0, C, D, E, A, B, SHA1C02, w0_t);
-  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F0, B, C, D, E, A, SHA1C02, w1_t);
-  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F0, A, B, C, D, E, SHA1C02, w2_t);
-  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F0, E, A, B, C, D, SHA1C02, w3_t);
-  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F0, D, E, A, B, C, SHA1C02, w4_t);
-  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F0, C, D, E, A, B, SHA1C02, w5_t);
-  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F0, B, C, D, E, A, SHA1C02, w6_t);
-  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F0, A, B, C, D, E, SHA1C02, w7_t);
-  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F0, E, A, B, C, D, SHA1C02, w8_t);
-  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F0, D, E, A, B, C, SHA1C02, w9_t);
-  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F0, C, D, E, A, B, SHA1C02, wa_t);
-  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F0, B, C, D, E, A, SHA1C02, wb_t);
+  W[16] = SHA1C02;
+  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F0, A, B, C, D, E, W[16], w8_t);
+  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F0, E, A, B, C, D, W[16], w9_t);
+  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F0, D, E, A, B, C, W[16], wa_t);
+  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F0, C, D, E, A, B, W[16], wb_t);
+  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F0, B, C, D, E, A, W[16], wc_t);
+  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F0, A, B, C, D, E, W[16], wd_t);
+  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F0, E, A, B, C, D, W[16], we_t);
+  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F0, D, E, A, B, C, W[16], wf_t);
+  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F0, C, D, E, A, B, W[16], w0_t);
+  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F0, B, C, D, E, A, W[16], w1_t);
+  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F0, A, B, C, D, E, W[16], w2_t);
+  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F0, E, A, B, C, D, W[16], w3_t);
+  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F0, D, E, A, B, C, W[16], w4_t);
+  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F0, C, D, E, A, B, W[16], w5_t);
+  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F0, B, C, D, E, A, W[16], w6_t);
+  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F0, A, B, C, D, E, W[16], w7_t);
+  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F0, E, A, B, C, D, W[16], w8_t);
+  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F0, D, E, A, B, C, W[16], w9_t);
+  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F0, C, D, E, A, B, W[16], wa_t);
+  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F0, B, C, D, E, A, W[16], wb_t);
 
   // Round 4 - loop unrolled.
-  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, A, B, C, D, E, SHA1C03, wc_t);
-  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, E, A, B, C, D, SHA1C03, wd_t);
-  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, D, E, A, B, C, SHA1C03, we_t);
-  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, C, D, E, A, B, SHA1C03, wf_t);
-  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F2, B, C, D, E, A, SHA1C03, w0_t);
-  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F2, A, B, C, D, E, SHA1C03, w1_t);
-  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F2, E, A, B, C, D, SHA1C03, w2_t);
-  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F2, D, E, A, B, C, SHA1C03, w3_t);
-  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, C, D, E, A, B, SHA1C03, w4_t);
-  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, B, C, D, E, A, SHA1C03, w5_t);
-  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, A, B, C, D, E, SHA1C03, w6_t);
-  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, E, A, B, C, D, SHA1C03, w7_t);
-  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F2, D, E, A, B, C, SHA1C03, w8_t);
-  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F2, C, D, E, A, B, SHA1C03, w9_t);
-  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F2, B, C, D, E, A, SHA1C03, wa_t);
-  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F2, A, B, C, D, E, SHA1C03, wb_t);
-  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, E, A, B, C, D, SHA1C03, wc_t);
-  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, D, E, A, B, C, SHA1C03, wd_t);
-  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, C, D, E, A, B, SHA1C03, we_t);
-  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, B, C, D, E, A, SHA1C03, wf_t);
+  W[16] = SHA1C03;
+  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, A, B, C, D, E, W[16], wc_t);
+  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, E, A, B, C, D, W[16], wd_t);
+  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, D, E, A, B, C, W[16], we_t);
+  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, C, D, E, A, B, W[16], wf_t);
+  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F2, B, C, D, E, A, W[16], w0_t);
+  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F2, A, B, C, D, E, W[16], w1_t);
+  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F2, E, A, B, C, D, W[16], w2_t);
+  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F2, D, E, A, B, C, W[16], w3_t);
+  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, C, D, E, A, B, W[16], w4_t);
+  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, B, C, D, E, A, W[16], w5_t);
+  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, A, B, C, D, E, W[16], w6_t);
+  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, E, A, B, C, D, W[16], w7_t);
+  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F2, D, E, A, B, C, W[16], w8_t);
+  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F2, C, D, E, A, B, W[16], w9_t);
+  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F2, B, C, D, E, A, W[16], wa_t);
+  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F2, A, B, C, D, E, W[16], wb_t);
+  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, E, A, B, C, D, W[16], wc_t);
+  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, D, E, A, B, C, W[16], wd_t);
+  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, C, D, E, A, B, W[16], we_t);
+  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, B, C, D, E, A, W[16], wf_t);
 
   digest[0] += A;
   digest[1] += B;
   digest[2] += C;
   digest[3] += D;
   digest[4] += E;
+#ifndef LOCAL_WORK_VARS
+  #undef A
+  #undef B
+  #undef C
+  #undef D
+  #undef E
+#endif
+  #undef w0_t
+  #undef w1_t
+  #undef w2_t
+  #undef w3_t
+  #undef w4_t
+  #undef w5_t
+  #undef w6_t
+  #undef w7_t
+  #undef w8_t
+  #undef w9_t
+  #undef wa_t
+  #undef wb_t
+  #undef wc_t
+  #undef wd_t
+  #undef we_t
+  #undef wf_t
 } 
 
 static inline unsigned int calc_padding(__constant B2SHAconst* fixed) {
@@ -251,7 +292,11 @@ static void sha1(__constant B2SHAconst* fixed,
   unsigned int bytesRemaining = fixed->bytesRemaining;
   int i;
   for (i = 0; bytesRemaining; i++, src++) {
-    unsigned int W[UINT_64BYTES];
+    unsigned int W[UINT_64BYTES + 1
+#ifndef LOCAL_WORK_VARS
+                   + 5
+#endif
+                  ];
     // Copy 64 bytes from src->buffer[], swapping to big-endian.
     // NOTE: src->buffer[] bytes past "bytesRemaining" *must* be provided as 0.
     for (int j = 0; j < UINT_64BYTES; j++) {
@@ -276,7 +321,11 @@ static void sha1(__constant B2SHAconst* fixed,
 
   // If an additional block is needed just to write len
   if (tail >= 56) {
-    unsigned int W[UINT_64BYTES]={0};
+    unsigned int W[UINT_64BYTES + 1
+#ifndef LOCAL_WORK_VARS
+                   + 5
+#endif
+                  ] = {0};
     if (tail == 0) {
       W[tail/4] |= calc_padding(fixed);
     }
@@ -589,7 +638,4 @@ __kernel void main(__constant B2SHAconst* fixed,
   //    * can tune threads per block. 64 is min, 128 or 256 is good
   //    * have the program auto-benchmark different local work sizes
   // 1. Only write to out (only save the hash) if there is a match
-  // 1. Try to auto-tune the local workgroup size in power-of-2 steps
-  //    until throughput is at a max. (Number of items to test per thread
-  //    also can be tuned but basically is just a tradeoff on responsiveness.)
 }
