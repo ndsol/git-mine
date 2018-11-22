@@ -99,12 +99,16 @@ struct CPUprep {
   long long atime_hint;
   long long ctime_hint;
 
-  // buildGPUbuf creates gpubuf and populates it from commit.
-  int buildGPUbuf() {
+  int init() {
     if (q.open()) {
       fprintf(stderr, "q.open failed\n");
       return 1;
     }
+    return 0;
+  }
+
+  // buildGPUbuf creates gpubuf and populates it from commit.
+  int buildGPUbuf() {
     if (fixed.size() != 1) {
       fprintf(stderr, "BUG: fixed.size=%zu\n", fixed.size());
       return 1;
@@ -123,9 +127,6 @@ struct CPUprep {
                 ctime_hint, commit.committer_btime);
       }
       ctime_hint = commit.committer_btime;
-    } else {
-      fprintf(stderr, "replace ctime %lld with %lld\n",
-              commit.committer_btime, ctime_hint);
     }
     // Adjust atime across the range atime_work.
     // Then, if no match is found, bump ctime and try again.
@@ -165,7 +166,13 @@ struct CPUprep {
     fixed.at(0).buffers = cpubuf.size();
 
     // Now with cpubuf.size() ready, create gpubuf.
-    if (gpubuf.createIO(q, cpubuf, state.size())) {
+    if (gpubuf.getHandle()) {
+      // gpubuf already created.
+      if (state.size() == 1 && q.writeBuffer(gpubuf.getHandle(), cpubuf)) {
+        fprintf(stderr, "writeBuffer(gpubuf) failed while resetting gpubuf\n");
+        return 1;
+      }
+    } else if (gpubuf.createIO(q, cpubuf, state.size())) {
       fprintf(stderr, "gpubuf.createInput failed\n");
       return 1;
     }
@@ -229,7 +236,18 @@ struct CPUprep {
     }
 
     // Copy fixed and state to GPU.
-    if (gpufixed.createInput(q, fixed) || gpustate.createIO(q, state)) {
+    if (gpufixed.getHandle()) {
+      if (!gpustate.getHandle()) {
+        fprintf(stderr, "BUG: gpufixed created, and not gpustate?\n");
+        return 1;
+      }
+      // gpufixed and gpustate already created.
+      if (q.writeBuffer(gpufixed.getHandle(), fixed) ||
+          q.writeBuffer(gpustate.getHandle(), state)) {
+        fprintf(stderr, "writeBuffer(gpufixed or gpustate) failed\n");
+        return 1;
+      }
+    } else if (gpufixed.createInput(q, fixed) || gpustate.createIO(q, state)) {
       fprintf(stderr, "gpufixed or gpustate failed\n");
       return 1;
     }
@@ -276,16 +294,12 @@ static int testGPUsha1(OpenCLdev& dev, OpenCLprog& prog,
   cpusha.update(s.c_str(), s.size());
   cpusha.flush();
 
-  if (prep.buildGPUbuf()) {
-    fprintf(stderr, "prep.buildGPUbuf failed\n");
+  if (prep.init() || prep.buildGPUbuf()) {
+    fprintf(stderr, "prep.init or prep.buildGPUbuf failed\n");
     return 1;
   }
-  if (prep.start({ prep.state.size() })) {
-    fprintf(stderr, "prep.start failed\n");
-    return 1;
-  }
-  if (prep.wait()) {
-    fprintf(stderr, "prep.wait failed\n");
+  if (prep.start({ prep.state.size() }) || prep.wait()) {
+    fprintf(stderr, "prep.start or prep.wait failed\n");
     return 1;
   }
   Sha1Hash shaout;
@@ -323,65 +337,77 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     prep.state.emplace_back();
   }
 
-  if (prep.buildGPUbuf()) {
-    fprintf(stderr, "buildGPUbuf failed\n");
+  if (prep.init()) {
+    fprintf(stderr, "prep.init failed\n");
     return 1;
   }
-  if (prep.start({ prep.state.size() })) {
-    fprintf(stderr, "prep.start failed\n");
-    return 1;
-  }
-  if (prep.wait()) {
-    fprintf(stderr, "prep.wait failed\n");
-    return 1;
-  }
-
-  atime_hint = prep.atime_hint;
-  ctime_hint = prep.ctime_hint;
-  long long atime_work = ctime_hint - atime_hint;
-  float workMax = prep.state.size();
-  for (size_t i = 0; i < prep.state.size(); i++) {
-    if (prep.state.at(i).matchLen == MIN_MATCH_LEN) {
-      continue;
-    }
-    uint64_t matchCount = prep.state.at(i).matchCount;
-    CommitMessage noodle(commit);
-    long long atime = commit.author_btime;
-    long long my_work_end = (float(i + 1) * atime_work) / workMax;
-    noodle.author_btime = atime + my_work_end - matchCount;
-    noodle.author_time = std::to_string(noodle.author_btime);
-    noodle.committer_btime = ctime_hint;
-    noodle.committer_time = std::to_string(ctime_hint);
-    fprintf(stderr, "%zu match=%u bytes  atime=%lld  ctime=%lld\n",
-            i, prep.state.at(i).matchLen, noodle.author_btime,
-            noodle.committer_btime);
-
-    Sha1Hash shaout;
-    Blake2Hash b2h;
-    noodle.hash(shaout, b2h);
-    char shabuf[1024];
-    if (shaout.dump(shabuf, sizeof(shabuf))) {
-      fprintf(stderr, "shaout.dump failed in findOnGPU\n");
+  size_t good = 0;
+  while (!good) {
+    fprintf(stderr, "try ctime %lld\n", prep.ctime_hint);
+    if (prep.buildGPUbuf()) {
+      fprintf(stderr, "buildGPUbuf failed\n");
       return 1;
     }
-    fprintf(stderr, "%zu sha1: \e[1;31m%.*s\e[0m%s\n", i,
-            prep.state.at(i).matchLen * 2, shabuf,
-            &shabuf[prep.state.at(i).matchLen * 2]);
-    char b2hbuf[1024];
-    if (b2h.dump(b2hbuf, sizeof(b2hbuf))) {
-      fprintf(stderr, "b2h.dump failed in findOnGPU\n");
+    if (prep.start({ prep.state.size() })) {
+      fprintf(stderr, "prep.start failed\n");
       return 1;
     }
-    shabuf[prep.state.at(i).matchLen * 2] = 0;
-    char* b2hpos = strstr(b2hbuf, shabuf);
-    int b2hlen = b2hpos ? (b2hpos - b2hbuf) : strlen(b2hbuf);
-    int b2hMatchLen = prep.state.at(i).matchLen * 2;
-    if (b2hlen + b2hMatchLen > (int)strlen(b2hbuf)) {
-      b2hMatchLen = strlen(b2hbuf) - b2hlen;
+    if (prep.wait()) {
+      fprintf(stderr, "prep.wait failed\n");
+      return 1;
     }
-    fprintf(stderr, "%zu blake2: %.*s\e[1;31m%.*s\e[0m%s\n", i, b2hlen,
-            b2hbuf, b2hMatchLen, &b2hbuf[b2hlen],
-            &b2hbuf[b2hlen + b2hMatchLen]);
+
+    atime_hint = prep.atime_hint;
+    ctime_hint = prep.ctime_hint;
+    long long atime_work = ctime_hint - atime_hint;
+    float workMax = prep.state.size();
+    for (size_t i = 0; i < prep.state.size(); i++) {
+      if (prep.state.at(i).matchLen == MIN_MATCH_LEN) {
+        continue;
+      }
+      uint64_t matchCount = prep.state.at(i).matchCount;
+      CommitMessage noodle(commit);
+      long long atime = commit.author_btime;
+      long long my_work_end = (float(i + 1) * atime_work) / workMax;
+      noodle.author_btime = atime + my_work_end - matchCount;
+      noodle.author_time = std::to_string(noodle.author_btime);
+      noodle.committer_btime = ctime_hint;
+      noodle.committer_time = std::to_string(ctime_hint);
+      fprintf(stderr, "%zu match=%u bytes  atime=%lld  ctime=%lld\n",
+              i, prep.state.at(i).matchLen, noodle.author_btime,
+              noodle.committer_btime);
+
+      Sha1Hash shaout;
+      Blake2Hash b2h;
+      noodle.hash(shaout, b2h);
+      char shabuf[1024];
+      if (shaout.dump(shabuf, sizeof(shabuf))) {
+        fprintf(stderr, "shaout.dump failed in findOnGPU\n");
+        return 1;
+      }
+      fprintf(stderr, "%zu sha1: \e[1;31m%.*s\e[0m%s\n", i,
+              prep.state.at(i).matchLen * 2, shabuf,
+              &shabuf[prep.state.at(i).matchLen * 2]);
+      char b2hbuf[1024];
+      if (b2h.dump(b2hbuf, sizeof(b2hbuf))) {
+        fprintf(stderr, "b2h.dump failed in findOnGPU\n");
+        return 1;
+      }
+      shabuf[prep.state.at(i).matchLen * 2] = 0;
+      char* b2hpos = strstr(b2hbuf, shabuf);
+      if (b2hpos) {
+        good++;
+      }
+      int b2hlen = b2hpos ? (b2hpos - b2hbuf) : strlen(b2hbuf);
+      int b2hMatchLen = prep.state.at(i).matchLen * 2;
+      if (b2hlen + b2hMatchLen > (int)strlen(b2hbuf)) {
+        b2hMatchLen = strlen(b2hbuf) - b2hlen;
+      }
+      fprintf(stderr, "%zu blake2: %.*s\e[1;31m%.*s\e[0m%s\n", i, b2hlen,
+              b2hbuf, b2hMatchLen, &b2hbuf[b2hlen],
+              &b2hbuf[b2hlen + b2hMatchLen]);
+    }
+    prep.ctime_hint++;
   }
   return 0;
 }
