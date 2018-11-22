@@ -67,6 +67,8 @@ struct B2SHAstate {
     counts = 1;
     matchCount = 0;
     matchLen = MIN_MATCH_LEN;
+    ctimePos = 0;
+    ctimeCount = 1;
   }
 
   uint64_t b2hash[B2H_DIGEST_LEN];
@@ -76,6 +78,8 @@ struct B2SHAstate {
   uint64_t counts;
   uint64_t matchCount;
   uint32_t matchLen;
+  uint32_t ctimePos;
+  uint32_t ctimeCount;
 };
 
 // CPUprep prepares the work for sha1.cl, and holds its output.
@@ -243,9 +247,16 @@ struct CPUprep {
     return 0;
   }
 
-  int start(const std::vector<size_t>& global_work_size) {
+  int start(std::vector<size_t> global_work_size) {
+    std::vector<size_t> local_work_size;
+    for (size_t i = 0; i < global_work_size.size() && i < 1; i++) {
+      size_t n = global_work_size.at(i);
+      static const size_t lf = 256;
+      local_work_size.emplace_back((n & (lf - 1)) != 0 ? 1 : lf);
+    }
     if (q.NDRangeKernel(prog, global_work_size.size(), NULL, 
-                        global_work_size.data(), NULL, NULL)) {
+                        global_work_size.data(),
+                        local_work_size.data(), NULL)) {
       fprintf(stderr, "NDRangeKernel failed\n");
       return 1;
     }

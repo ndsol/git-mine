@@ -57,6 +57,8 @@ typedef struct {
   unsigned long counts;
   unsigned long matchCount;
   unsigned int matchLen;
+  unsigned int ctimePos;
+  unsigned int ctimeCount;
 } B2SHAstate;
 
 #define rotl(a, n) rotate((a), (n)) 
@@ -472,66 +474,85 @@ static inline void blake2b_update(__constant B2SHAconst* fixed,
   for (i = 0; i < B2_OUTSIZE; i++) state->b2hash[i] = S.h[i];
 }
 
+void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
+  unsigned int srcIdx = i / 64;
+  i &= (64 - 1);
+  unsigned int bits = 8*mod(i, sizeof(unsigned int));
+  i /= sizeof(unsigned int);
+  for (;;) {
+    unsigned int digit = src[srcIdx].buffer[i];
+    src[srcIdx].buffer[i] = digit +
+        (((((digit >> bits) & 0xff) >= 0x39) ? -9 : 1) << bits);
+    if (((digit >> bits) & 0xff) < 0x39 /*ASCII '9'*/) {
+      break;
+    }
+    if (bits == 0) {
+      bits = 8*sizeof(unsigned int);
+      if (i == 0) {
+        if (srcIdx == 0) {
+          break;
+        }
+        srcIdx--;
+        i = 64;
+      }
+      i--;
+    }
+    bits -= 8;
+  }
+}
+
+void compareB2SHA(__global B2SHAstate* state) {
+  unsigned int bits;
+  for (bits = 0; bits < B2H_DIGEST_LEN*sizeof(unsigned long); bits++) {
+    unsigned long b2h = state->b2hash[bits/sizeof(unsigned long)];
+    b2h >>= 8*mod(bits, sizeof(unsigned long));
+    if ((b2h & 0xff) == (state->hash[0] & 0xff)) {
+      unsigned int i;
+      for (i = 1; i < SHA_DIGEST_LEN*sizeof(unsigned int); i++) {
+        if (bits + i >= B2H_DIGEST_LEN*sizeof(unsigned long)) break;
+
+        unsigned int sha = state->hash[i/sizeof(unsigned int)];
+        sha >>= 8*mod(i, sizeof(unsigned int));
+        sha &= 0xff;
+        b2h = state->b2hash[(bits+i)/sizeof(unsigned long)];
+        b2h = (b2h >> (8*mod(bits+i, sizeof(unsigned long)))) & 0xff;
+        if (b2h != sha) break;
+      }
+      if (i > state->matchLen) {
+        state->matchCount = state->counts;
+        state->matchLen = i;
+      }
+    }
+  }
+}
+
 __kernel void main(__constant B2SHAconst* fixed,
                    __global B2SHAstate* states,
                    __global B2SHAbuffer* srcs) {
   #define idx get_global_id(0)
   __global B2SHAstate* state = &states[idx];
-  __global B2SHAbuffer* src;
+  __global B2SHAbuffer* src = &srcs[idx*fixed->buffers];
 
-  while (state->counts) {
-    src = &srcs[idx*fixed->buffers];
-    sha1(fixed, state, src);
-    blake2b_update(fixed, state, src);
-    unsigned int i;
-    unsigned int bits;
-    for (bits = 0; bits < B2H_DIGEST_LEN*sizeof(unsigned long); bits++) {
-      unsigned long b2h = state->b2hash[bits/sizeof(unsigned long)];
-      b2h >>= 8*mod(bits, sizeof(unsigned long));
-      if ((b2h & 0xff) == (state->hash[0] & 0xff)) {
-        for (i = 1; i < SHA_DIGEST_LEN*sizeof(unsigned int); i++) {
-          if (bits + i >= B2H_DIGEST_LEN*sizeof(unsigned long)) break;
+  unsigned int oldCounts = state->counts;
+  while (state->ctimeCount) {
+    while (state->counts) {
+      sha1(fixed, state, src);
+      blake2b_update(fixed, state, src);
+      compareB2SHA(state);
+      state->counts--;
 
-          unsigned int sha = state->hash[i/sizeof(unsigned int)];
-          sha >>= 8*mod(i, sizeof(unsigned int));
-          sha &= 0xff;
-          b2h = state->b2hash[(bits+i)/sizeof(unsigned long)];
-          b2h = (b2h >> (8*mod(bits+i, sizeof(unsigned long)))) & 0xff;
-          if (b2h != sha) break;
-        }
-        if (i > state->matchLen) {
-          state->matchCount = state->counts;
-          state->matchLen = i;
-        }
-      }
+      asciiIncrement(src, state->counterPos);
     }
-    state->counts--;
-
-    i = state->counterPos;
-    src += i / 64;
-    i &= (64 - 1);
-    bits = 8*mod(i, sizeof(unsigned int));
-    i /= sizeof(unsigned int);
-    while (i > 7) {
-      unsigned int digit = src->buffer[i];
-      src->buffer[i] = digit +
-          (((((digit >> bits) & 0xff) >= 0x39) ? -9 : 1) << bits);
-      if (((digit >> bits) & 0xff) < 0x39 /*ASCII '9'*/) {
-        break;
-      }
-      if (bits == 0) {
-        bits = 8*sizeof(unsigned int);
-        i--;
-      }
-      bits -= 8;
-    }
+    state->counts = oldCounts;
+    asciiIncrement(src, state->ctimePos);
+    state->ctimeCount--;
   }
   // Things that might speed it up:
   // 1. OpenCL best practices:
   //    * can tune the register usage with
   // http://developer.download.nvidia.com/compute/cuda/3_2_prod/toolkit/docs/OpenCL_Extensions/cl_nv_compiler_options.txt
   //    * can tune threads per block. 64 is min, 128 or 256 is good
-  //    * have the program auto-benchmark different global work sizes
+  //    * have the program auto-benchmark different local work sizes
   // 1. Only write to out (only save the hash) if there is a match
   // 1. Try to auto-tune the local workgroup size in power-of-2 steps
   //    until throughput is at a max. (Number of items to test per thread
