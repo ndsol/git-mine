@@ -57,6 +57,7 @@ typedef struct {
   unsigned long counts;
   unsigned long matchCount;
   unsigned int matchLen;
+  unsigned int matchCtimeCount;
   unsigned int ctimePos;
   unsigned int ctimeCount;
 } B2SHAstate;
@@ -521,9 +522,40 @@ void compareB2SHA(__global B2SHAstate* state) {
       if (i > state->matchLen) {
         state->matchCount = state->counts;
         state->matchLen = i;
+        state->matchCtimeCount = state->ctimeCount;
       }
     }
   }
+}
+
+void getOldSrc(__global B2SHAbuffer* src, __global B2SHAstate* state,
+               unsigned int oldSrc[2]) {
+  unsigned int i = state->counterPos;
+  unsigned int srcIdx = i / 64;
+  i &= (64 - 1);
+  i /= sizeof(unsigned int);
+  oldSrc[0] = src[srcIdx].buffer[i];
+  if (i == 0) {
+    srcIdx--;
+    i = 64;
+  }
+  i--;
+  oldSrc[1] = src[srcIdx].buffer[i];
+}
+
+void restoreOldSrc(__global B2SHAbuffer* src, __global B2SHAstate* state,
+                   unsigned int oldSrc[2]) {
+  unsigned int i = state->counterPos;
+  unsigned int srcIdx = i / 64;
+  i &= (64 - 1);
+  i /= sizeof(unsigned int);
+  src[srcIdx].buffer[i] = oldSrc[0];
+  if (i == 0) {
+    srcIdx--;
+    i = 64;
+  }
+  i--;
+  src[srcIdx].buffer[i] = oldSrc[1];
 }
 
 __kernel void main(__constant B2SHAconst* fixed,
@@ -534,6 +566,8 @@ __kernel void main(__constant B2SHAconst* fixed,
   __global B2SHAbuffer* src = &srcs[idx*fixed->buffers];
 
   unsigned int oldCounts = state->counts;
+  unsigned int oldSrc[2];
+  getOldSrc(src, state, oldSrc);
   while (state->ctimeCount) {
     while (state->counts) {
       sha1(fixed, state, src);
@@ -544,6 +578,7 @@ __kernel void main(__constant B2SHAconst* fixed,
       asciiIncrement(src, state->counterPos);
     }
     state->counts = oldCounts;
+    restoreOldSrc(src, state, oldSrc);
     asciiIncrement(src, state->ctimePos);
     state->ctimeCount--;
   }

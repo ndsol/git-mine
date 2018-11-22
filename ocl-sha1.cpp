@@ -78,6 +78,7 @@ struct B2SHAstate {
   uint64_t counts;
   uint64_t matchCount;
   uint32_t matchLen;
+  uint32_t matchCtimeCount;
   uint32_t ctimePos;
   uint32_t ctimeCount;
 };
@@ -89,7 +90,7 @@ struct CPUprep {
   CPUprep(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit)
       : dev(dev), prog(prog), q(dev), commit(commit), gpufixed(dev)
       , gpustate(dev), gpubuf(dev), fixed(1), atime_hint(0), ctime_hint(0)
-      , testOnly(0) {}
+      , ctimeCount(1), testOnly(0) {}
 
   OpenCLdev& dev;
   OpenCLprog& prog;
@@ -107,6 +108,7 @@ struct CPUprep {
   std::vector<B2SHAbuffer> cpubuf;
   long long atime_hint;
   long long ctime_hint;
+  unsigned ctimeCount;
   int testOnly;
 
   int init() {
@@ -159,7 +161,11 @@ struct CPUprep {
       state.at(i).counterPos = noodle.header.size() + noodle.parent.size() +
                               noodle.author.size() + noodle.author_time.size()
                               - 1;
+      state.at(i).ctimePos = state.at(i).counterPos + noodle.author_tz.size() +
+                             noodle.committer.size() +
+                             noodle.committer_time.size();
       state.at(i).counts = (uint32_t) (my_work_end - my_work_start);
+      state.at(i).ctimeCount = ctimeCount;
       if (testOnly) {
         state.at(i).counts = 1;
       }
@@ -329,6 +335,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
   prep.ctime_hint = ctime_hint;
 
   // Set context for each worker.
+  prep.ctimeCount = 8;
   static const size_t numWorkers = 2048*3;
   for (size_t i = 0; i < numWorkers; i++) {
     prep.state.emplace_back();
@@ -353,7 +360,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     float sec = sec_duration.count();
 
     float r = 0.0f;
-    if (sec > 0.95f) {
+    if (sec > 1e-6) {
       t0 = t1;
       r = float(last_work)/sec * 1e-6;
       last_work = 0;
@@ -368,7 +375,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     ctime_hint = prep.ctime_hint;
     // Preemptively start building the next batch of work. This lets the CPU
     // be busy while the GPU is also busy.
-    prep.ctime_hint++;
+    prep.ctime_hint += prep.ctimeCount;
     if (prep.waitWritten() || prep.buildGPUbuf()) {
       fprintf(stderr, "waitWritten or next buildGPUbuf failed\n");
       return 1;
@@ -379,7 +386,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     }
 
     long long atime_work = ctime_hint - atime_hint;
-    last_work += atime_work;
+    last_work += atime_work*prep.ctimeCount;
     float workMax = prep.state.size();
     for (size_t i = 0; i < prep.state.size(); i++) {
       if (prep.result.at(i).matchLen == MIN_MATCH_LEN) {
@@ -391,8 +398,9 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       long long my_work_end = (float(i + 1) * atime_work) / workMax;
       noodle.author_btime = atime + my_work_end - matchCount;
       noodle.author_time = std::to_string(noodle.author_btime);
-      noodle.committer_btime = ctime_hint;
-      noodle.committer_time = std::to_string(ctime_hint);
+      noodle.committer_btime = ctime_hint + prep.ctimeCount -
+                               prep.result.at(i).matchCtimeCount;
+      noodle.committer_time = std::to_string(noodle.committer_btime);
       fprintf(stderr, "%zu match=%u bytes  atime=%lld  ctime=%lld\n",
               i, prep.result.at(i).matchLen, noodle.author_btime,
               noodle.committer_btime);
