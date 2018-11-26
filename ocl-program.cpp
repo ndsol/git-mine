@@ -30,7 +30,7 @@ static int printBuildLog(char* log) {
   return 0;
 }
 
-int OpenCLprog::open(const char* mainFuncName) {
+int OpenCLprog::open(const char* mainFuncName, std::string buildargs /*= ""*/) {
   if (prog) {
     fprintf(stderr, "validation: OpenCLprog::open called twice\n");
     return 1;
@@ -44,7 +44,7 @@ int OpenCLprog::open(const char* mainFuncName) {
     return 1;
   }
 
-  v = clBuildProgram(prog, 1, &dev.devId, "-cl-nv-verbose", NULL, NULL);
+  v = clBuildProgram(prog, 1, &dev.devId, buildargs.c_str(), NULL, NULL);
   if (v != CL_SUCCESS) {
     fprintf(stderr, "%s failed: %d %s\n", "clBuildProgram", v, clerrstr(v));
     (void)printBuildLog(getBuildLog());

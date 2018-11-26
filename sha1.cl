@@ -92,7 +92,7 @@ unsigned int swap(unsigned int val) {
 #define SHA1C02 0x8f1bbcdcu
 #define SHA1C03 0xca62c1d6u
 
-#define ApplySHA1func(f, a, b, c, d, e, k, x) \
+#define SHA1step(f, a, b, c, d, e, k, x) \
 { \
   e += k;            \
   e += x;            \
@@ -104,151 +104,130 @@ unsigned int swap(unsigned int val) {
 #define shuffleAndSHA1(w, f, a, b, c, d, e, k, x) \
 { \
   x = rotl(w ^ x, 1u); \
-  ApplySHA1func(f, a, b, c, d, e, k, x); \
+  SHA1step(f, a, b, c, d, e, k, x); \
 }
 
-static void sha1_process2(unsigned int *W, unsigned int *digest) {
-#define LOCAL_WORK_VARS
-#ifdef LOCAL_WORK_VARS
+static void sha1_update(uint4 *WV, unsigned int *digest) {
   unsigned int A = digest[0];
   unsigned int B = digest[1];
   unsigned int C = digest[2];
   unsigned int D = digest[3];
   unsigned int E = digest[4];
-#else
-  #define A W[17]
-  #define B W[18]
-  #define C W[19]
-  #define D W[20]
-  #define E W[21]
-  A = digest[0];
-  B = digest[1];
-  C = digest[2];
-  D = digest[3];
-  E = digest[4];
-#endif
 
-  #define w0_t W[0]
-  #define w1_t W[1]
-  #define w2_t W[2]
-  #define w3_t W[3]
-  #define w4_t W[4]
-  #define w5_t W[5]
-  #define w6_t W[6]
-  #define w7_t W[7]
-  #define w8_t W[8]
-  #define w9_t W[9]
-  #define wa_t W[10]
-  #define wb_t W[11]
-  #define wc_t W[12]
-  #define wd_t W[13]
-  #define we_t W[14]
-  #define wf_t W[15]
+  #define w0_t WV[0].s0
+  #define w1_t WV[0].s1
+  #define w2_t WV[0].s2
+  #define w3_t WV[0].s3
+  #define w4_t WV[1].s0
+  #define w5_t WV[1].s1
+  #define w6_t WV[1].s2
+  #define w7_t WV[1].s3
+  #define w8_t WV[2].s0
+  #define w9_t WV[2].s1
+  #define wa_t WV[2].s2
+  #define wb_t WV[2].s3
+  #define wc_t WV[3].s0
+  #define wd_t WV[3].s1
+  #define we_t WV[3].s2
+  #define wf_t WV[3].s3
 
   // Round 1 - loop unrolled.
-  W[16] = SHA1C00;
-  ApplySHA1func(F1, A, B, C, D, E, W[16], w0_t);
-  ApplySHA1func(F1, E, A, B, C, D, W[16], w1_t);
-  ApplySHA1func(F1, D, E, A, B, C, W[16], w2_t);
-  ApplySHA1func(F1, C, D, E, A, B, W[16], w3_t);
-  ApplySHA1func(F1, B, C, D, E, A, W[16], w4_t);
-  ApplySHA1func(F1, A, B, C, D, E, W[16], w5_t);
-  ApplySHA1func(F1, E, A, B, C, D, W[16], w6_t);
-  ApplySHA1func(F1, D, E, A, B, C, W[16], w7_t);
-  ApplySHA1func(F1, C, D, E, A, B, W[16], w8_t);
-  ApplySHA1func(F1, B, C, D, E, A, W[16], w9_t);
-  ApplySHA1func(F1, A, B, C, D, E, W[16], wa_t);
-  ApplySHA1func(F1, E, A, B, C, D, W[16], wb_t);
-  ApplySHA1func(F1, D, E, A, B, C, W[16], wc_t);
-  ApplySHA1func(F1, C, D, E, A, B, W[16], wd_t);
-  ApplySHA1func(F1, B, C, D, E, A, W[16], we_t);
-  ApplySHA1func(F1, A, B, C, D, E, W[16], wf_t);
-  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F1, E, A, B, C, D, W[16], w0_t);
-  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F1, D, E, A, B, C, W[16], w1_t);
-  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F1, C, D, E, A, B, W[16], w2_t);
-  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F1, B, C, D, E, A, W[16], w3_t);
+  unsigned int shaK = SHA1C00;
+  SHA1step(F1, A, B, C, D, E, shaK, w0_t);
+  SHA1step(F1, E, A, B, C, D, shaK, w1_t);
+  SHA1step(F1, D, E, A, B, C, shaK, w2_t);
+  SHA1step(F1, C, D, E, A, B, shaK, w3_t);
+  SHA1step(F1, B, C, D, E, A, shaK, w4_t);
+  SHA1step(F1, A, B, C, D, E, shaK, w5_t);
+  SHA1step(F1, E, A, B, C, D, shaK, w6_t);
+  SHA1step(F1, D, E, A, B, C, shaK, w7_t);
+  SHA1step(F1, C, D, E, A, B, shaK, w8_t);
+  SHA1step(F1, B, C, D, E, A, shaK, w9_t);
+  SHA1step(F1, A, B, C, D, E, shaK, wa_t);
+  SHA1step(F1, E, A, B, C, D, shaK, wb_t);
+  SHA1step(F1, D, E, A, B, C, shaK, wc_t);
+  SHA1step(F1, C, D, E, A, B, shaK, wd_t);
+  SHA1step(F1, B, C, D, E, A, shaK, we_t);
+  SHA1step(F1, A, B, C, D, E, shaK, wf_t);
+  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F1, E, A, B, C, D, shaK, w0_t);
+  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F1, D, E, A, B, C, shaK, w1_t);
+  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F1, C, D, E, A, B, shaK, w2_t);
+  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F1, B, C, D, E, A, shaK, w3_t);
 
   // Round 2 - loop unrolled.
-  W[16] = SHA1C01;
-  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, A, B, C, D, E, W[16], w4_t);
-  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, E, A, B, C, D, W[16], w5_t);
-  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, D, E, A, B, C, W[16], w6_t);
-  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, C, D, E, A, B, W[16], w7_t);
-  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F2, B, C, D, E, A, W[16], w8_t);
-  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F2, A, B, C, D, E, W[16], w9_t);
-  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F2, E, A, B, C, D, W[16], wa_t);
-  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F2, D, E, A, B, C, W[16], wb_t);
-  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, C, D, E, A, B, W[16], wc_t);
-  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, B, C, D, E, A, W[16], wd_t);
-  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, A, B, C, D, E, W[16], we_t);
-  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, E, A, B, C, D, W[16], wf_t);
-  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F2, D, E, A, B, C, W[16], w0_t);
-  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F2, C, D, E, A, B, W[16], w1_t);
-  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F2, B, C, D, E, A, W[16], w2_t);
-  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F2, A, B, C, D, E, W[16], w3_t);
-  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, E, A, B, C, D, W[16], w4_t);
-  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, D, E, A, B, C, W[16], w5_t);
-  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, C, D, E, A, B, W[16], w6_t);
-  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, B, C, D, E, A, W[16], w7_t);
+  shaK = SHA1C01;
+  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, A, B, C, D, E, shaK, w4_t);
+  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, E, A, B, C, D, shaK, w5_t);
+  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, D, E, A, B, C, shaK, w6_t);
+  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, C, D, E, A, B, shaK, w7_t);
+  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F2, B, C, D, E, A, shaK, w8_t);
+  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F2, A, B, C, D, E, shaK, w9_t);
+  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F2, E, A, B, C, D, shaK, wa_t);
+  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F2, D, E, A, B, C, shaK, wb_t);
+  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, C, D, E, A, B, shaK, wc_t);
+  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, B, C, D, E, A, shaK, wd_t);
+  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, A, B, C, D, E, shaK, we_t);
+  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, E, A, B, C, D, shaK, wf_t);
+  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F2, D, E, A, B, C, shaK, w0_t);
+  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F2, C, D, E, A, B, shaK, w1_t);
+  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F2, B, C, D, E, A, shaK, w2_t);
+  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F2, A, B, C, D, E, shaK, w3_t);
+  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, E, A, B, C, D, shaK, w4_t);
+  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, D, E, A, B, C, shaK, w5_t);
+  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, C, D, E, A, B, shaK, w6_t);
+  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, B, C, D, E, A, shaK, w7_t);
 
   // Round 3 - loop unrolled.
-  W[16] = SHA1C02;
-  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F0, A, B, C, D, E, W[16], w8_t);
-  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F0, E, A, B, C, D, W[16], w9_t);
-  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F0, D, E, A, B, C, W[16], wa_t);
-  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F0, C, D, E, A, B, W[16], wb_t);
-  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F0, B, C, D, E, A, W[16], wc_t);
-  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F0, A, B, C, D, E, W[16], wd_t);
-  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F0, E, A, B, C, D, W[16], we_t);
-  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F0, D, E, A, B, C, W[16], wf_t);
-  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F0, C, D, E, A, B, W[16], w0_t);
-  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F0, B, C, D, E, A, W[16], w1_t);
-  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F0, A, B, C, D, E, W[16], w2_t);
-  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F0, E, A, B, C, D, W[16], w3_t);
-  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F0, D, E, A, B, C, W[16], w4_t);
-  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F0, C, D, E, A, B, W[16], w5_t);
-  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F0, B, C, D, E, A, W[16], w6_t);
-  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F0, A, B, C, D, E, W[16], w7_t);
-  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F0, E, A, B, C, D, W[16], w8_t);
-  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F0, D, E, A, B, C, W[16], w9_t);
-  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F0, C, D, E, A, B, W[16], wa_t);
-  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F0, B, C, D, E, A, W[16], wb_t);
+  shaK = SHA1C02;
+  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F0, A, B, C, D, E, shaK, w8_t);
+  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F0, E, A, B, C, D, shaK, w9_t);
+  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F0, D, E, A, B, C, shaK, wa_t);
+  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F0, C, D, E, A, B, shaK, wb_t);
+  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F0, B, C, D, E, A, shaK, wc_t);
+  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F0, A, B, C, D, E, shaK, wd_t);
+  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F0, E, A, B, C, D, shaK, we_t);
+  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F0, D, E, A, B, C, shaK, wf_t);
+  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F0, C, D, E, A, B, shaK, w0_t);
+  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F0, B, C, D, E, A, shaK, w1_t);
+  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F0, A, B, C, D, E, shaK, w2_t);
+  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F0, E, A, B, C, D, shaK, w3_t);
+  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F0, D, E, A, B, C, shaK, w4_t);
+  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F0, C, D, E, A, B, shaK, w5_t);
+  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F0, B, C, D, E, A, shaK, w6_t);
+  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F0, A, B, C, D, E, shaK, w7_t);
+  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F0, E, A, B, C, D, shaK, w8_t);
+  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F0, D, E, A, B, C, shaK, w9_t);
+  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F0, C, D, E, A, B, shaK, wa_t);
+  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F0, B, C, D, E, A, shaK, wb_t);
 
   // Round 4 - loop unrolled.
-  W[16] = SHA1C03;
-  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, A, B, C, D, E, W[16], wc_t);
-  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, E, A, B, C, D, W[16], wd_t);
-  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, D, E, A, B, C, W[16], we_t);
-  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, C, D, E, A, B, W[16], wf_t);
-  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F2, B, C, D, E, A, W[16], w0_t);
-  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F2, A, B, C, D, E, W[16], w1_t);
-  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F2, E, A, B, C, D, W[16], w2_t);
-  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F2, D, E, A, B, C, W[16], w3_t);
-  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, C, D, E, A, B, W[16], w4_t);
-  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, B, C, D, E, A, W[16], w5_t);
-  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, A, B, C, D, E, W[16], w6_t);
-  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, E, A, B, C, D, W[16], w7_t);
-  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F2, D, E, A, B, C, W[16], w8_t);
-  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F2, C, D, E, A, B, W[16], w9_t);
-  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F2, B, C, D, E, A, W[16], wa_t);
-  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F2, A, B, C, D, E, W[16], wb_t);
-  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, E, A, B, C, D, W[16], wc_t);
-  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, D, E, A, B, C, W[16], wd_t);
-  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, C, D, E, A, B, W[16], we_t);
-  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, B, C, D, E, A, W[16], wf_t);
+  shaK = SHA1C03;
+  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, A, B, C, D, E, shaK, wc_t);
+  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, E, A, B, C, D, shaK, wd_t);
+  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, D, E, A, B, C, shaK, we_t);
+  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, C, D, E, A, B, shaK, wf_t);
+  shuffleAndSHA1(wd_t ^ w8_t ^ w2_t, F2, B, C, D, E, A, shaK, w0_t);
+  shuffleAndSHA1(we_t ^ w9_t ^ w3_t, F2, A, B, C, D, E, shaK, w1_t);
+  shuffleAndSHA1(wf_t ^ wa_t ^ w4_t, F2, E, A, B, C, D, shaK, w2_t);
+  shuffleAndSHA1(w0_t ^ wb_t ^ w5_t, F2, D, E, A, B, C, shaK, w3_t);
+  shuffleAndSHA1(w1_t ^ wc_t ^ w6_t, F2, C, D, E, A, B, shaK, w4_t);
+  shuffleAndSHA1(w2_t ^ wd_t ^ w7_t, F2, B, C, D, E, A, shaK, w5_t);
+  shuffleAndSHA1(w3_t ^ we_t ^ w8_t, F2, A, B, C, D, E, shaK, w6_t);
+  shuffleAndSHA1(w4_t ^ wf_t ^ w9_t, F2, E, A, B, C, D, shaK, w7_t);
+  shuffleAndSHA1(w5_t ^ w0_t ^ wa_t, F2, D, E, A, B, C, shaK, w8_t);
+  shuffleAndSHA1(w6_t ^ w1_t ^ wb_t, F2, C, D, E, A, B, shaK, w9_t);
+  shuffleAndSHA1(w7_t ^ w2_t ^ wc_t, F2, B, C, D, E, A, shaK, wa_t);
+  shuffleAndSHA1(w8_t ^ w3_t ^ wd_t, F2, A, B, C, D, E, shaK, wb_t);
+  shuffleAndSHA1(w9_t ^ w4_t ^ we_t, F2, E, A, B, C, D, shaK, wc_t);
+  shuffleAndSHA1(wa_t ^ w5_t ^ wf_t, F2, D, E, A, B, C, shaK, wd_t);
+  shuffleAndSHA1(wb_t ^ w6_t ^ w0_t, F2, C, D, E, A, B, shaK, we_t);
+  shuffleAndSHA1(wc_t ^ w7_t ^ w1_t, F2, B, C, D, E, A, shaK, wf_t);
 
   digest[0] += A;
   digest[1] += B;
   digest[2] += C;
   digest[3] += D;
   digest[4] += E;
-#ifndef LOCAL_WORK_VARS
-  #undef A
-  #undef B
-  #undef C
-  #undef D
-  #undef E
-#endif
   #undef w0_t
   #undef w1_t
   #undef w2_t
@@ -265,22 +244,30 @@ static void sha1_process2(unsigned int *W, unsigned int *digest) {
   #undef wd_t
   #undef we_t
   #undef wf_t
-} 
-
-static inline unsigned int calc_padding(__constant B2SHAconst* fixed) {
-  return swap(0x80 << (mod(fixed->len, 4) * 8));
 }
 
-static inline void write_len(unsigned int* W, __constant B2SHAconst* fixed)
-{
-  W[0xe] = fixed->len >> (32-3);
-  W[0xf] = fixed->len << 3;
+
+#define tail mod(fixed->len, 64)
+static inline void write_padding(uint4* WV, __constant B2SHAconst* fixed) {
+  unsigned int padding = swap(0x80 << (mod(fixed->len, 4) * 8));
+  uint4 v = WV[tail/16];
+  switch (mod(fixed->len, 16)/4) {
+    case 0: v.s0 |= padding; break;
+    case 1: v.s1 |= padding; break;
+    case 2: v.s2 |= padding; break;
+    case 3: v.s3 |= padding; break;
+  }
+  WV[tail/16] = v;
+}
+
+static inline void write_len(uint4* WV, __constant B2SHAconst* fixed) {
+  WV[3].s2 = fixed->len >> (32-3);
+  WV[3].s3 = fixed->len << 3;
 }
 
 static void sha1(__constant B2SHAconst* fixed,
                  __global B2SHAstate* state,
                  __global const B2SHAbuffer* src) {
-  int tail = mod(fixed->len, 64);
   unsigned int hash[SHA_DIGEST_LEN] = {
     fixed->shaiv[0],  // Hash IV must be set on CPU.
     fixed->shaiv[1],
@@ -292,46 +279,45 @@ static void sha1(__constant B2SHAconst* fixed,
   unsigned int bytesRemaining = fixed->bytesRemaining;
   int i;
   for (i = 0; bytesRemaining; i++, src++) {
-    unsigned int W[UINT_64BYTES + 1
-#ifndef LOCAL_WORK_VARS
-                   + 5
-#endif
-                  ];
+    uint4 WV[UINT_64BYTES/4];
     // Copy 64 bytes from src->buffer[], swapping to big-endian.
     // NOTE: src->buffer[] bytes past "bytesRemaining" *must* be provided as 0.
-    for (int j = 0; j < UINT_64BYTES; j++) {
-      W[j] = swap(src->buffer[j]);
+    for (int j = 0; j < UINT_64BYTES; ) {
+      WV[j/4].s0 = swap(src->buffer[j]);
+      j++;
+      WV[j/4].s1 = swap(src->buffer[j]);
+      j++;
+      WV[j/4].s2 = swap(src->buffer[j]);
+      j++;
+      WV[j/4].s3 = swap(src->buffer[j]);
+      j++;
     }
 
     // If this will be the last loop and some of {padding,len} should be added.
     if (bytesRemaining < 64) {
       bytesRemaining = 0;
       if (tail != 0) {
-        W[tail/4] |= calc_padding(fixed);
+        write_padding(WV, fixed);
         if (tail < 56) {
-          write_len(W, fixed);
+          write_len(WV, fixed);
         }
       }
     } else {
       bytesRemaining -= 64;
     }
 
-    sha1_process2(W, hash);
+    sha1_update(WV, hash);
   }
 
   // If an additional block is needed just to write len
   if (tail >= 56) {
-    unsigned int W[UINT_64BYTES + 1
-#ifndef LOCAL_WORK_VARS
-                   + 5
-#endif
-                  ] = {0};
+    uint4 WV[UINT_64BYTES/4] = {0, 0, 0, 0};
     if (tail == 0) {
-      W[tail/4] |= calc_padding(fixed);
+      write_padding(WV, fixed);
     }
-    write_len(W, fixed);
+    write_len(WV, fixed);
 
-    sha1_process2(W, hash);
+    sha1_update(WV, hash);
   }
 
   for (i = 0; i < SHA_DIGEST_LEN; i++) {
@@ -388,6 +374,56 @@ typedef struct
     b = rotr(b ^ c, 63lu);               \
   } while(0)
 
+#define G2(r,i1,vva,vvb,vvc,vvd) \
+  do { \
+    vva += vvb;                            \
+    vva.s0 += m[blake2b_sigma[r][2*i1+0]]; \
+    vva.s1 += m[blake2b_sigma[r][2*i1+2]]; \
+    vvd = rotr(vvd ^ vva, 32lu);           \
+    vvc += vvd;                            \
+    vvb = rotr(vvb ^ vvc, 24lu);           \
+    vva += vvb;                            \
+    vva.s0 += m[blake2b_sigma[r][2*i1+1]]; \
+    vva.s1 += m[blake2b_sigma[r][2*i1+3]]; \
+    vvd = rotr(vvd ^ vva, 16lu);           \
+    vvc += vvd;                            \
+    vvb = rotr(vvb ^ vvc, 63lu);           \
+  } while (0)
+
+#define G2v(r,i1,a,b,c,d) \
+  G2(r,i1,vv[a/2],vv[b/2],vv[c/2],vv[d/2])
+
+#define G(r,i,a,b,c,d)                   \
+  do {                                   \
+    a += b + m[blake2b_sigma[r][2*i+0]]; \
+    d = rotr(d ^ a, 32lu);               \
+    c += d;                              \
+    b = rotr(b ^ c, 24lu);               \
+    a += b + m[blake2b_sigma[r][2*i+1]]; \
+    d = rotr(d ^ a, 16lu);               \
+    c += d;                              \
+    b = rotr(b ^ c, 63lu);               \
+  } while(0)
+
+#define USE_ULONG2
+#ifdef USE_ULONG2
+#define ROUND(r)           \
+  do {                     \
+    G2v(r,0, 0, 4, 8,12); \
+    vv[16/2].s1 = vv[12/2].s0; \
+    G2v(r,2, 2, 6,10,14); \
+    vv[12/2].s0 = vv[14/2].s0; \
+    vv[16/2].s0 = vv[15/2].s1; \
+    vv[14/2] = (ulong2) (vv[5/2].s1, vv[6/2].s0); \
+    G2v(r,4, 0,14,10,16); \
+    vv[5/2].s1 = vv[14/2].s0; \
+    vv[6/2].s0 = vv[15/2].s1; \
+    vv[14/2] = (ulong2) (vv[12/2].s0, vv[16/2].s0); \
+    vv[12/2].s0 = vv[16/2].s1; \
+    G(r,6,vv[ 2/2].s0,vv[ 7/2].s1,vv[ 8/2].s0,vv[13/2].s1); \
+    G(r,7,vv[ 3/2].s1,vv[ 4/2].s0,vv[ 9/2].s1,vv[14/2].s0); \
+  } while(0)
+#else
 #define ROUND(r)                    \
   do {                              \
     G(r,0,v[ 0],v[ 4],v[ 8],v[12]); \
@@ -399,19 +435,39 @@ typedef struct
     G(r,6,v[ 2],v[ 7],v[ 8],v[13]); \
     G(r,7,v[ 3],v[ 4],v[ 9],v[14]); \
   } while(0)
+#endif
 
 static void blake2b_compress(
     __constant B2SHAconst* fixed,
     blake2b_state *S,
     const uint32_t block[B2_128BYTES/sizeof(unsigned int)]) {
   uint64_t m[16];
-  uint64_t v[16];
   uint32_t i;
 
   for( i = 0; i < 16; ++i ) {
     m[i] = block[i*2] | ((uint64_t)block[i*2 + 1] << 32);
   }
 
+#ifdef USE_ULONG2
+  ulong2 vv[9] = {
+    { S->h[0], S->h[1] },
+    { S->h[2], S->h[3] },
+    { S->h[4], S->h[5] },
+    { S->h[6], S->h[7] },
+    { fixed->b2iv[0], fixed->b2iv[1] },
+    { fixed->b2iv[2], fixed->b2iv[3] },
+    { fixed->b2iv[4] ^ S->t[0],
+#if BLAKE2_EXABYTE_NOT_EXPECTED > 1
+//      fixed->b2iv[5] ^ S->t[1] },
+#else
+      fixed->b2iv[5] },
+#endif
+    { fixed->b2iv[6] ^ S->f[0],
+      fixed->b2iv[7] /* ^ S->f[1] removed: no last_node */ },
+    { 0, 0 },
+  };
+#else
+  uint64_t v[16];
   for( i = 0; i < 8; ++i ) {
     v[i] = S->h[i];
   }
@@ -428,6 +484,7 @@ static void blake2b_compress(
 #endif
   v[14] = fixed->b2iv[6] ^ S->f[0];
   v[15] = fixed->b2iv[7] /* ^ S->f[1] removed: no last_node */;
+#endif
 
   ROUND( 0 );
   ROUND( 1 );
@@ -442,9 +499,17 @@ static void blake2b_compress(
   ROUND( 10 );
   ROUND( 11 );
 
+#ifdef USE_ULONG2
+  for( i = 0; i < B2_OUTSIZE/2; ++i ) {
+    ulong2 x = vv[i] ^ vv[i + 4];
+    S->h[i*2  ] ^= x.s0;
+    S->h[i*2+1] ^= x.s1;
+  }
+#else
   for( i = 0; i < B2_OUTSIZE; ++i ) {
     S->h[i] ^= v[i] ^ v[i + 8];
   }
+#endif
 }
 
 #undef G

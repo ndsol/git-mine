@@ -20,7 +20,7 @@ public:
     }
   }
 
-  int open(const char* mainFuncName);
+  int open(const char* mainFuncName, std::string buildargs = "");
 
   const char* const code;
   OpenCLdev& dev;
