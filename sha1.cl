@@ -410,18 +410,17 @@ typedef struct
 #define ROUND(r)           \
   do {                     \
     G2v(r,0, 0, 4, 8,12); \
-    vv[16/2].s1 = vv[12/2].s0; \
     G2v(r,2, 2, 6,10,14); \
-    vv[12/2].s0 = vv[14/2].s0; \
-    vv[16/2].s0 = vv[15/2].s1; \
-    vv[14/2] = (ulong2) (vv[5/2].s1, vv[6/2].s0); \
-    G2v(r,4, 0,14,10,16); \
-    vv[5/2].s1 = vv[14/2].s0; \
-    vv[6/2].s0 = vv[15/2].s1; \
-    vv[14/2] = (ulong2) (vv[12/2].s0, vv[16/2].s0); \
-    vv[12/2].s0 = vv[16/2].s1; \
-    G(r,6,vv[ 2/2].s0,vv[ 7/2].s1,vv[ 8/2].s0,vv[13/2].s1); \
+    ulong v13 = vv[13/2].s1; \
+    vv[16/2] = (ulong2)(vv[15/2].s1, vv[12/2].s0); \
+    vv[18/2] = (ulong2)(vv[5/2].s1, vv[6/2].s0); \
+    G2v(r,4, 0,18,10,16); \
+    vv[5/2].s1 = vv[18/2].s0; \
+    vv[6/2].s0 = vv[19/2].s1; \
+    G(r,6,vv[ 2/2].s0,vv[ 7/2].s1,vv[ 8/2].s0,v13); \
     G(r,7,vv[ 3/2].s1,vv[ 4/2].s0,vv[ 9/2].s1,vv[14/2].s0); \
+    vv[14/2] = (ulong2)(vv[14/2].s0, vv[16/2].s0); \
+    vv[12/2] = (ulong2)(vv[16/2].s1, v13); \
   } while(0)
 #else
 #define ROUND(r)                    \
@@ -449,7 +448,7 @@ static void blake2b_compress(
   }
 
 #ifdef USE_ULONG2
-  ulong2 vv[9] = {
+  ulong2 vv[10] = {
     { S->h[0], S->h[1] },
     { S->h[2], S->h[3] },
     { S->h[4], S->h[5] },
@@ -464,6 +463,7 @@ static void blake2b_compress(
 #endif
     { fixed->b2iv[6] ^ S->f[0],
       fixed->b2iv[7] /* ^ S->f[1] removed: no last_node */ },
+    { 0, 0 },
     { 0, 0 },
   };
 #else
