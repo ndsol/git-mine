@@ -346,8 +346,6 @@ typedef struct
   uint32_t buflen;
 } blake2b_state;
 
-#define USE_ULONG2
-#ifdef USE_ULONG2
 static const uint32_t __constant blake2b_sigma32[12][4] = {
   { 0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f } ,
   { 0x0e0a0408, 0x090f0d06, 0x010c0002, 0x0b070503 } ,
@@ -362,6 +360,10 @@ static const uint32_t __constant blake2b_sigma32[12][4] = {
   { 0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f } ,
   { 0x0e0a0408, 0x090f0d06, 0x010c0002, 0x0b070503 } ,
 };
+
+// Next optimization: create another G32 that splits vvb into sep vars.
+// This will reduce a lot of the copying around in ROUND
+// vv[18/2] can be completely eliminated
 
 #define G32(r,i1,vva,vvb,vvc,vvd) \
   do { \
@@ -398,65 +400,6 @@ static const uint32_t __constant blake2b_sigma32[12][4] = {
     vv[14/2] = (ulong2)(vv[13/2].s1, vv[16/2].s0); \
     vv[12/2] = (ulong2)(vv[17/2].s1, vv[12/2].s0); \
   } while(0)
-#else
-typedef unsigned short uint16_t;
-static const uint16_t __constant blake2b_sigma16[12][8] =
-{
-  { 0x0001, 0x0203, 0x0405, 0x0607, 0x0809, 0x0a0b, 0x0c0d, 0x0e0f } ,
-  { 0x0e0a, 0x0408, 0x090f, 0x0d06, 0x010c, 0x0002, 0x0b07, 0x0503 } ,
-  { 0x0b08, 0x0c00, 0x0502, 0x0f0d, 0x0a0e, 0x0306, 0x0701, 0x0904 } ,
-  { 0x0709, 0x0301, 0x0d0c, 0x0b0e, 0x0206, 0x050a, 0x0400, 0x0f08 } ,
-  { 0x0900, 0x0507, 0x0204, 0x0a0f, 0x0e01, 0x0b0c, 0x0608, 0x030d } ,
-  { 0x020c, 0x060a, 0x000b, 0x0803, 0x040d, 0x0705, 0x0f0e, 0x0109 } ,
-  { 0x0c05, 0x010f, 0x0e0d, 0x040a, 0x0007, 0x0603, 0x0902, 0x080b } ,
-  { 0x0d0b, 0x070e, 0x0c01, 0x0309, 0x0500, 0x0f04, 0x0806, 0x020a } ,
-  { 0x060f, 0x0e09, 0x0b03, 0x0008, 0x0c02, 0x0d07, 0x0104, 0x0a05 } ,
-  { 0x0a02, 0x0804, 0x0706, 0x0105, 0x0f0b, 0x090e, 0x030c, 0x0d00 } ,
-  { 0x0001, 0x0203, 0x0405, 0x0607, 0x0809, 0x0a0b, 0x0c0d, 0x0e0f } ,
-  { 0x0e0a, 0x0408, 0x090f, 0x0d06, 0x010c, 0x0002, 0x0b07, 0x0503 }
-};
-
-static const uint8_t __constant blake2b_sigma[12][16] =
-{
-  {  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15 } ,
-  { 14, 10,  4,  8,  9, 15, 13,  6,  1, 12,  0,  2, 11,  7,  5,  3 } ,
-  { 11,  8, 12,  0,  5,  2, 15, 13, 10, 14,  3,  6,  7,  1,  9,  4 } ,
-  {  7,  9,  3,  1, 13, 12, 11, 14,  2,  6,  5, 10,  4,  0, 15,  8 } ,
-  {  9,  0,  5,  7,  2,  4, 10, 15, 14,  1, 11, 12,  6,  8,  3, 13 } ,
-  {  2, 12,  6, 10,  0, 11,  8,  3,  4, 13,  7,  5, 15, 14,  1,  9 } ,
-  { 12,  5,  1, 15, 14, 13,  4, 10,  0,  7,  6,  3,  9,  2,  8, 11 } ,
-  { 13, 11,  7, 14, 12,  1,  3,  9,  5,  0, 15,  4,  8,  6,  2, 10 } ,
-  {  6, 15, 14,  9, 11,  3,  0,  8, 12,  2, 13,  7,  1,  4, 10,  5 } ,
-  { 10,  2,  8,  4,  7,  6,  1,  5, 15, 11,  9, 14,  3, 12, 13 , 0 } ,
-  {  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15 } ,
-  { 14, 10,  4,  8,  9, 15, 13,  6,  1, 12,  0,  2, 11,  7,  5,  3 }
-};
-
-
-#define G(r,i,a,b,c,d)                   \
-  do {                                   \
-    a += b + m[blake2b_sigma[r][2*i+0]]; \
-    d = rotr(d ^ a, 32lu);               \
-    c += d;                              \
-    b = rotr(b ^ c, 24lu);               \
-    a += b + m[blake2b_sigma[r][2*i+1]]; \
-    d = rotr(d ^ a, 16lu);               \
-    c += d;                              \
-    b = rotr(b ^ c, 63lu);               \
-  } while(0)
-
-#define ROUND(r)                    \
-  do {                              \
-    G(r,0,v[ 0],v[ 4],v[ 8],v[12]); \
-    G(r,1,v[ 1],v[ 5],v[ 9],v[13]); \
-    G(r,2,v[ 2],v[ 6],v[10],v[14]); \
-    G(r,3,v[ 3],v[ 7],v[11],v[15]); \
-    G(r,4,v[ 0],v[ 5],v[10],v[15]); \
-    G(r,5,v[ 1],v[ 6],v[11],v[12]); \
-    G(r,6,v[ 2],v[ 7],v[ 8],v[13]); \
-    G(r,7,v[ 3],v[ 4],v[ 9],v[14]); \
-  } while(0)
-#endif
 
 static void blake2b_compress(
     __constant B2SHAconst* fixed,
@@ -469,7 +412,6 @@ static void blake2b_compress(
     m[i] = block[i*2] | ((uint64_t)block[i*2 + 1] << 32);
   }
 
-#ifdef USE_ULONG2
   ulong2 vv[10] = {
     { S->h[0], S->h[1] },
     { S->h[2], S->h[3] },
@@ -488,25 +430,6 @@ static void blake2b_compress(
     { 0, 0 },
     { 0, 0 },
   };
-#else
-  uint64_t v[16];
-  for( i = 0; i < 8; ++i ) {
-    v[i] = S->h[i];
-  }
-
-  v[ 8] = fixed->b2iv[0];
-  v[ 9] = fixed->b2iv[1];
-  v[10] = fixed->b2iv[2];
-  v[11] = fixed->b2iv[3];
-  v[12] = fixed->b2iv[4] ^ S->t[0];
-#if BLAKE2_EXABYTE_NOT_EXPECTED > 1
-  v[13] = fixed->b2iv[5] ^ S->t[1];
-#else
-  v[13] = fixed->b2iv[5];
-#endif
-  v[14] = fixed->b2iv[6] ^ S->f[0];
-  v[15] = fixed->b2iv[7] /* ^ S->f[1] removed: no last_node */;
-#endif
 
   ROUND( 0 );
   ROUND( 1 );
@@ -521,17 +444,11 @@ static void blake2b_compress(
   ROUND( 10 );
   ROUND( 11 );
 
-#ifdef USE_ULONG2
   for( i = 0; i < B2_OUTSIZE/2; ++i ) {
     ulong2 x = vv[i] ^ vv[i + 4];
     S->h[i*2  ] ^= x.s0;
     S->h[i*2+1] ^= x.s1;
   }
-#else
-  for( i = 0; i < B2_OUTSIZE; ++i ) {
-    S->h[i] ^= v[i] ^ v[i + 8];
-  }
-#endif
 }
 
 #undef G
