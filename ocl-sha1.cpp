@@ -60,9 +60,6 @@ struct B2SHAstate {
     for (size_t i = 0; i < SHA_DIGEST_LEN; i++) {
       hash[i] = 0;
     }
-    for (size_t i = 0; i < B2H_DIGEST_LEN; i++) {
-      b2hash[i] = 0;
-    }
     counterPos = 0;
     counts = 1;
     matchCount = 0;
@@ -71,7 +68,6 @@ struct B2SHAstate {
     ctimeCount = 1;
   }
 
-  uint64_t b2hash[B2H_DIGEST_LEN];
   uint32_t hash[SHA_DIGEST_LEN];
 
   uint32_t counterPos;
@@ -370,8 +366,8 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       t0 = t1;
       r = float(last_work)/sec * 1e-6;
       last_work = 0;
-      fprintf(stderr, "%.1fs %6.3fM/s try ctime %lld (batches of %u, %.6f)\n", sec,
-              r, prep.ctime_hint, prep.ctimeCount, ctimeCheck);
+      fprintf(stderr, "%.1fs %6.3fM/s try ctime %lld (batch=%u, %.6f)\n",
+              sec, r, prep.ctime_hint, prep.ctimeCount, ctimeCheck);
     }
     if (prep.start({ prep.state.size() })) {
       fprintf(stderr, "prep.start failed\n");

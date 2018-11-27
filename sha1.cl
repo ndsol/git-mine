@@ -39,7 +39,6 @@ typedef struct {
 } B2SHAconst;
 
 typedef struct {
-  unsigned long b2hash[B2H_DIGEST_LEN];
   unsigned int hash[SHA_DIGEST_LEN];
 
   // counterPos is the position in the input of the last ASCII digit of the
@@ -339,11 +338,14 @@ typedef unsigned long uint64_t;
 // 17 exabytes are seen. You must then set BLAKE2_EXABYTE_NOT_EXPECTED (2)
 typedef struct
 {
+  uint32_t buf[B2_128BYTES / sizeof(uint32_t)];
   uint64_t h[B2_OUTSIZE];
   uint64_t t[BLAKE2_EXABYTE_NOT_EXPECTED];
   uint64_t f[1];
-  uint32_t buf[B2_128BYTES / sizeof(uint32_t)];
-  uint32_t buflen;
+
+  // Fields used only for this algorithm that compares hashes:
+  unsigned int oldCounts;
+  unsigned int oldSrc[2];
 } blake2b_state;
 
 static const uint32_t __constant blake2b_sigma32[12][4] = {
@@ -455,69 +457,59 @@ static inline void blake2b_increment_counter(blake2b_state *S, uint64_t inc) {
 }
 
 static inline void blake2b_update(__constant B2SHAconst* fixed,
-                                  __global B2SHAstate* state,
+                                  blake2b_state* S,
                                   __global const B2SHAbuffer* src) {
-  blake2b_state S;
-
   // inline blake2b_init:
-  S.t[0] = 0;
+  S->t[0] = 0;
 #if BLAKE2_EXABYTE_NOT_EXPECTED > 1
-  S.t[1] = 0;
+  S->t[1] = 0;
 #endif
-  S.f[0] = 0;
+  S->f[0] = 0;
 
-  uint32_t i;
-  for( i = 0; i < sizeof(S.buf)/sizeof(S.buf[0]); i++ ) S.buf[i] = 0;
-  for( i = 0; i < B2_OUTSIZE; i++ ) S.h[i] = fixed->b2iv[i];
-  S.buflen = 0;
+  for (unsigned i = 0; i < sizeof(S->buf)/sizeof(S->buf[0]); i++) S->buf[i] = 0;
+  for (unsigned i = 0; i < B2_OUTSIZE; i++) S->h[i] = fixed->b2iv[i];
 
   // xor with P->fanout       = 1;
   // xor with P->depth        = 1;
-  S.h[0] ^= 0x01010000 | sizeof(S.h);
+  S->h[0] ^= 0x01010000 | sizeof(S->h);
 
   // begin blake2b_update:
   uint32_t rem = fixed->bytesRemaining;
   while (rem > B2_128BYTES) {
-    __global const unsigned int* in = src->buffer;
+    unsigned i;
     for (i = 0; i < UINT_64BYTES; i++) {
-      S.buf[i] = in[i];
+      S->buf[i] = src->buffer[i];
     }
     src++;
-    in = src->buffer;
     for (; i < UINT_64BYTES*2; i++) {
-      S.buf[i] = in[i - UINT_64BYTES];
+      S->buf[i] = src->buffer[i - UINT_64BYTES];
     }
-    blake2b_increment_counter(&S, B2_128BYTES);
-    blake2b_compress( fixed, &S, S.buf );
+    blake2b_increment_counter(S, B2_128BYTES);
+    blake2b_compress( fixed, S, S->buf );
     src++;
     rem -= B2_128BYTES;
   }
 
-  // Prepare for blake2b_final.
-  for (i = 0; i < B2_128BYTES/4; i++) S.buf[i] = 0;
+  // blake2b_final:
+  unsigned i;
+  for (i = 0; i < B2_128BYTES/4; i++) S->buf[i] = 0;
+  blake2b_increment_counter(S, rem);
   unsigned int words = (rem + sizeof(unsigned int) - 1)/sizeof(unsigned int);
-  S.buflen = rem;
-  __global const unsigned int* in = src->buffer;
   for (i = 0; i < words && i < UINT_64BYTES; i++) {
-    S.buf[i] = in[i];
+    S->buf[i] = src->buffer[i];
   }
   if (i < words) {
     src++;
     words -= UINT_64BYTES;
-    in = src->buffer;
     for (i = 0; i < words && i < UINT_64BYTES; i++) {
-      S.buf[i + UINT_64BYTES] = in[i];
+      S->buf[i + UINT_64BYTES] = src->buffer[i];
     }
   }
 
-  // inline blake2b_final:
-  blake2b_increment_counter( &S, S.buflen );
-  // blake2b_set_lastblock( S ) is a single line, so it is inlined as:
-  S.f[0] = (uint64_t)-1;
+  // blake2b_set_lastblock(S) is a single line, so it is inlined as:
+  S->f[0] = (uint64_t)-1;
   // Rely on any extra bytes copied from src->buffer to be 0.
-  blake2b_compress( fixed, &S, S.buf );
-
-  for (i = 0; i < B2_OUTSIZE; i++) state->b2hash[i] = S.h[i];
+  blake2b_compress( fixed, S, S->buf );
 }
 
 void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
@@ -547,10 +539,10 @@ void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
   }
 }
 
-void compareB2SHA(__global B2SHAstate* state) {
+void compareB2SHA(__global B2SHAstate* state, blake2b_state* S) {
   unsigned int bits;
   for (bits = 0; bits < B2H_DIGEST_LEN*sizeof(unsigned long); bits++) {
-    unsigned long b2h = state->b2hash[bits/sizeof(unsigned long)];
+    unsigned long b2h = S->h[bits/sizeof(unsigned long)];
     b2h >>= 8*mod(bits, sizeof(unsigned long));
     if ((b2h & 0xff) == (state->hash[0] & 0xff)) {
       unsigned int i;
@@ -560,7 +552,7 @@ void compareB2SHA(__global B2SHAstate* state) {
         unsigned int sha = state->hash[i/sizeof(unsigned int)];
         sha >>= 8*mod(i, sizeof(unsigned int));
         sha &= 0xff;
-        b2h = state->b2hash[(bits+i)/sizeof(unsigned long)];
+        b2h = S->h[(bits+i)/sizeof(unsigned long)];
         b2h = (b2h >> (8*mod(bits+i, sizeof(unsigned long)))) & 0xff;
         if (b2h != sha) break;
       }
@@ -574,33 +566,35 @@ void compareB2SHA(__global B2SHAstate* state) {
 }
 
 void getOldSrc(__global B2SHAbuffer* src, __global B2SHAstate* state,
-               unsigned int oldSrc[2]) {
+               blake2b_state* S) {
+  S->oldCounts = state->counts;
   unsigned int i = state->counterPos;
   unsigned int srcIdx = i / 64;
   i &= (64 - 1);
   i /= sizeof(unsigned int);
-  oldSrc[0] = src[srcIdx].buffer[i];
+  S->oldSrc[0] = src[srcIdx].buffer[i];
   if (i == 0) {
     srcIdx--;
     i = 64;
   }
   i--;
-  oldSrc[1] = src[srcIdx].buffer[i];
+  S->oldSrc[1] = src[srcIdx].buffer[i];
 }
 
 void restoreOldSrc(__global B2SHAbuffer* src, __global B2SHAstate* state,
-                   unsigned int oldSrc[2]) {
+                   blake2b_state* S) {
   unsigned int i = state->counterPos;
   unsigned int srcIdx = i / 64;
   i &= (64 - 1);
   i /= sizeof(unsigned int);
-  src[srcIdx].buffer[i] = oldSrc[0];
+  src[srcIdx].buffer[i] = S->oldSrc[0];
   if (i == 0) {
     srcIdx--;
     i = 64;
   }
   i--;
-  src[srcIdx].buffer[i] = oldSrc[1];
+  src[srcIdx].buffer[i] = S->oldSrc[1];
+  state->counts = S->oldCounts;
 }
 
 __kernel void main(__constant B2SHAconst* fixed,
@@ -610,20 +604,18 @@ __kernel void main(__constant B2SHAconst* fixed,
   #define state (&states[idx])
   #define src (&srcs[idx*fixed->buffers])
 
-  unsigned int oldCounts = state->counts;
-  unsigned int oldSrc[2];
-  getOldSrc(src, state, oldSrc);
+  blake2b_state S;
+  getOldSrc(src, state, &S);
   while (state->ctimeCount) {
     while (state->counts) {
       sha1(fixed, state, src);
-      blake2b_update(fixed, state, src);
-      compareB2SHA(state);
+      blake2b_update(fixed, &S, src);
+      compareB2SHA(state, &S);
       state->counts--;
 
       asciiIncrement(src, state->counterPos);
     }
-    state->counts = oldCounts;
-    restoreOldSrc(src, state, oldSrc);
+    restoreOldSrc(src, state, &S);
     asciiIncrement(src, state->ctimePos);
     state->ctimeCount--;
   }
