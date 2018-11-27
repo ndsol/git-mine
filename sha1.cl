@@ -698,8 +698,8 @@ __kernel void main(__constant B2SHAconst* fixed,
                    __global B2SHAstate* states,
                    __global B2SHAbuffer* srcs) {
   #define idx get_global_id(0)
-  __global B2SHAstate* state = &states[idx];
-  __global B2SHAbuffer* src = &srcs[idx*fixed->buffers];
+  #define state (&states[idx])
+  #define src (&srcs[idx*fixed->buffers])
 
   unsigned int oldCounts = state->counts;
   unsigned int oldSrc[2];
