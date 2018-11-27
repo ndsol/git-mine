@@ -248,15 +248,13 @@ static void sha1_update(uint4 *WV, unsigned int *digest) {
 
 #define tail mod(fixed->len, 64)
 static inline void write_padding(uint4* WV, __constant B2SHAconst* fixed) {
-  unsigned int padding = swap(0x80 << (mod(fixed->len, 4) * 8));
-  uint4 v = WV[tail/16];
+  unsigned int padding = 0x80 << (24 - mod(fixed->len, 4)*8);
   switch (mod(fixed->len, 16)/4) {
-    case 0: v.s0 |= padding; break;
-    case 1: v.s1 |= padding; break;
-    case 2: v.s2 |= padding; break;
-    case 3: v.s3 |= padding; break;
+    case 0: WV[tail/16].s0 |= padding; break;
+    case 1: WV[tail/16].s1 |= padding; break;
+    case 2: WV[tail/16].s2 |= padding; break;
+    case 3: WV[tail/16].s3 |= padding; break;
   }
-  WV[tail/16] = v;
 }
 
 static inline void write_len(uint4* WV, __constant B2SHAconst* fixed) {
@@ -266,49 +264,44 @@ static inline void write_len(uint4* WV, __constant B2SHAconst* fixed) {
 
 static void sha1(__constant B2SHAconst* fixed,
                  __global B2SHAstate* state,
-                 __global const B2SHAbuffer* src) {
-  unsigned int hash[SHA_DIGEST_LEN] = {
-    fixed->shaiv[0],  // Hash IV must be set on CPU.
-    fixed->shaiv[1],
-    fixed->shaiv[2],
-    fixed->shaiv[3],
-    fixed->shaiv[4],
-  };
+                 __global const B2SHAbuffer* src,
+                 unsigned int* hash) {
+  hash[0] = fixed->shaiv[0];  // Hash IV must be set on CPU.
+  hash[1] = fixed->shaiv[1];
+  hash[2] = fixed->shaiv[2];
+  hash[3] = fixed->shaiv[3];
+  hash[4] = fixed->shaiv[4];
 
   unsigned int bytesRemaining = fixed->bytesRemaining;
   int i;
   for (i = 0; bytesRemaining; i++, src++) {
-    uint4 WV[UINT_64BYTES/4];
+    union {
+      uint4 V[UINT_64BYTES/4];
+      unsigned int u[UINT_64BYTES];
+    } W;
     // Copy 64 bytes from src->buffer[], swapping to big-endian.
     // NOTE: src->buffer[] bytes past "bytesRemaining" *must* be provided as 0.
-    for (int j = 0; j < UINT_64BYTES; ) {
-      WV[j/4].s0 = swap(src->buffer[j]);
-      j++;
-      WV[j/4].s1 = swap(src->buffer[j]);
-      j++;
-      WV[j/4].s2 = swap(src->buffer[j]);
-      j++;
-      WV[j/4].s3 = swap(src->buffer[j]);
-      j++;
+    for (int j = 0; j < UINT_64BYTES; j++) {
+      W.u[j] = swap(src->buffer[j]);
     }
 
     // If this will be the last loop and some of {padding,len} should be added.
     if (bytesRemaining < 64) {
       bytesRemaining = 0;
       if (tail != 0) {
-        write_padding(WV, fixed);
+        write_padding(W.V, fixed);
         if (tail < 56) {
-          write_len(WV, fixed);
+          write_len(W.V, fixed);
         }
       }
     } else {
       bytesRemaining -= 64;
     }
 
-    sha1_update(WV, hash);
+    sha1_update(W.V, hash);
   }
 
-  // If an additional block is needed just to write len
+  // If an additional block is needed just to be able to fit len
   if (tail >= 56) {
     uint4 WV[UINT_64BYTES/4] = {0, 0, 0, 0};
     if (tail == 0) {
@@ -320,7 +313,7 @@ static void sha1(__constant B2SHAconst* fixed,
   }
 
   for (i = 0; i < SHA_DIGEST_LEN; i++) {
-    state->hash[i] = swap(hash[i]);
+    hash[i] = swap(hash[i]);
   }
 }
 
@@ -346,6 +339,7 @@ typedef struct
   // Fields used only for this algorithm that compares hashes:
   unsigned int oldCounts;
   unsigned int oldSrc[2];
+  unsigned int shahash[SHA_DIGEST_LEN];
 } blake2b_state;
 
 static const uint32_t __constant blake2b_sigma32[12][4] = {
@@ -512,7 +506,7 @@ static inline void blake2b_update(__constant B2SHAconst* fixed,
   blake2b_compress( fixed, S, S->buf );
 }
 
-void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
+static void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
   unsigned int srcIdx = i / 64;
   i &= (64 - 1);
   unsigned int bits = 8*mod(i, sizeof(unsigned int));
@@ -539,17 +533,17 @@ void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
   }
 }
 
-void compareB2SHA(__global B2SHAstate* state, blake2b_state* S) {
+static void compareB2SHA(__global B2SHAstate* state, blake2b_state* S) {
   unsigned int bits;
   for (bits = 0; bits < B2H_DIGEST_LEN*sizeof(unsigned long); bits++) {
     unsigned long b2h = S->h[bits/sizeof(unsigned long)];
     b2h >>= 8*mod(bits, sizeof(unsigned long));
-    if ((b2h & 0xff) == (state->hash[0] & 0xff)) {
+    if ((b2h & 0xff) == (S->shahash[0] & 0xff)) {
       unsigned int i;
       for (i = 1; i < SHA_DIGEST_LEN*sizeof(unsigned int); i++) {
         if (bits + i >= B2H_DIGEST_LEN*sizeof(unsigned long)) break;
 
-        unsigned int sha = state->hash[i/sizeof(unsigned int)];
+        unsigned int sha = S->shahash[i/sizeof(unsigned int)];
         sha >>= 8*mod(i, sizeof(unsigned int));
         sha &= 0xff;
         b2h = S->h[(bits+i)/sizeof(unsigned long)];
@@ -565,8 +559,9 @@ void compareB2SHA(__global B2SHAstate* state, blake2b_state* S) {
   }
 }
 
-void getOldSrc(__global B2SHAbuffer* src, __global B2SHAstate* state,
-               blake2b_state* S) {
+static inline void getOldSrc(__global B2SHAbuffer* src,
+                             __global B2SHAstate* state,
+                             blake2b_state* S) {
   S->oldCounts = state->counts;
   unsigned int i = state->counterPos;
   unsigned int srcIdx = i / 64;
@@ -581,8 +576,9 @@ void getOldSrc(__global B2SHAbuffer* src, __global B2SHAstate* state,
   S->oldSrc[1] = src[srcIdx].buffer[i];
 }
 
-void restoreOldSrc(__global B2SHAbuffer* src, __global B2SHAstate* state,
-                   blake2b_state* S) {
+static inline void restoreOldSrc(__global B2SHAbuffer* src,
+                                 __global B2SHAstate* state,
+                                 blake2b_state* S) {
   unsigned int i = state->counterPos;
   unsigned int srcIdx = i / 64;
   i &= (64 - 1);
@@ -608,7 +604,7 @@ __kernel void main(__constant B2SHAconst* fixed,
   getOldSrc(src, state, &S);
   while (state->ctimeCount) {
     while (state->counts) {
-      sha1(fixed, state, src);
+      sha1(fixed, state, src, &S.shahash);
       blake2b_update(fixed, &S, src);
       compareB2SHA(state, &S);
       state->counts--;
@@ -619,11 +615,13 @@ __kernel void main(__constant B2SHAconst* fixed,
     asciiIncrement(src, state->ctimePos);
     state->ctimeCount--;
   }
+  for (unsigned int i = 0; i < SHA_DIGEST_LEN; i++) {
+    state->hash[i] = S.shahash[i];
+  }
   // Things that might speed it up:
   // 1. OpenCL best practices:
   //    * can tune the register usage with
   // http://developer.download.nvidia.com/compute/cuda/3_2_prod/toolkit/docs/OpenCL_Extensions/cl_nv_compiler_options.txt
   //    * can tune threads per block. 64 is min, 128 or 256 is good
   //    * have the program auto-benchmark different local work sizes
-  // 1. Only write to out (only save the hash) if there is a match
 }
