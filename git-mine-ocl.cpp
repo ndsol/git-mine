@@ -102,7 +102,7 @@ int findHash(OpenCLdev& dev, const CommitMessage& commit,
   codeBuf[rresult] = 0;
   OpenCLprog prog(codeBuf, dev);
   // Helpful to try: -cl-nv-maxrregcount=128 or 132
-  if (prog.open("main", "-cl-nv-verbose")) {
+  if (prog.open("main", "-cl-nv-verbose -cl-nv-maxrregcount=128")) {
     fprintf(stderr, "open(main) failed\n");
     return 1;
   }

@@ -382,21 +382,35 @@ static const uint32_t __constant blake2b_sigma32[12][4] = {
     vvb = rotr(vvb ^ vvc, 63lu);           \
   } while (0)
 
+#define G32splitB(r,i1,vva,vb1,vb2,vvc,vvd) \
+  do { \
+    unsigned int s = blake2b_sigma32[r][i1/2]; \
+    vva += (ulong2) (vb1 + m[s >> 24], vb2 + m[(s >> 8) & 0xf]); \
+    vvd = rotr(vvd ^ vva, 32lu);           \
+    vvc += vvd;                            \
+    vb1 = rotr(vb1 ^ vvc.s0, 24lu);        \
+    vb2 = rotr(vb2 ^ vvc.s1, 24lu);        \
+    vva += (ulong2) (vb1 + m[(s >> 16) & 0xf], vb2 + m[s & 0xf]); \
+    vvd = rotr(vvd ^ vva, 16lu);           \
+    vvc += vvd;                            \
+    vb1 = rotr(vb1 ^ vvc.s0, 63lu);        \
+    vb2 = rotr(vb2 ^ vvc.s1, 63lu);        \
+  } while (0)
+
 #define G2v(r,i1,a,b,c,d) \
   G32(r,i1,vv[a/2],vv[b/2],vv[c/2],vv[d/2])
+
+#define G2vsplit(r,i1,a,vb1,vb2,c,d) \
+  G32splitB(r,i1,vv[a/2],vb1,vb2,vv[c/2],vv[d/2])
 
 #define ROUND(r)           \
   do {                     \
     G2v(r,0, 0, 4, 8,12); \
     G2v(r,2, 2, 6,10,14); \
     vv[16/2] = (ulong2)(vv[15/2].s1, vv[12/2].s0); \
-    vv[18/2] = (ulong2)(vv[5/2].s1, vv[6/2].s0); \
-    G2v(r,4, 0,18,10,16); \
-    vv[ 6/2] = (ulong2)(vv[7/2].s1, vv[4/2].s0); \
+    G2vsplit(r,4, 0,vv[5/2].s1,vv[6/2].s0,10,16); \
     vv[12/2] = (ulong2)(vv[13/2].s1, vv[14/2].s0); \
-    G2v(r,6, 2, 6, 8,12); \
-    vv[ 4/2] = (ulong2)(vv[7/2].s1, vv[18/2].s0); \
-    vv[ 6/2] = (ulong2)(vv[19/2].s1, vv[6/2].s0); \
+    G2vsplit(r,6, 2,vv[7/2].s1,vv[4/2].s0, 8,12); \
     vv[14/2] = (ulong2)(vv[13/2].s1, vv[16/2].s0); \
     vv[12/2] = (ulong2)(vv[17/2].s1, vv[12/2].s0); \
   } while(0)
@@ -412,7 +426,7 @@ static void blake2b_compress(
     m[i] = block[i*2] | ((uint64_t)block[i*2 + 1] << 32);
   }
 
-  ulong2 vv[10] = {
+  ulong2 vv[9] = {
     { S->h[0], S->h[1] },
     { S->h[2], S->h[3] },
     { S->h[4], S->h[5] },
@@ -427,7 +441,6 @@ static void blake2b_compress(
 #endif
     { fixed->b2iv[6] ^ S->f[0],
       fixed->b2iv[7] /* ^ S->f[1] removed: no last_node */ },
-    { 0, 0 },
     { 0, 0 },
   };
 

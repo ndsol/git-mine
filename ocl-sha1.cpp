@@ -335,8 +335,8 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
   prep.ctime_hint = ctime_hint;
 
   // Set context for each worker.
-  prep.ctimeCount = 8;
-  static const size_t numWorkers = 2048*3;
+  prep.ctimeCount = 32;
+  static const size_t numWorkers = 32*1024;
   for (size_t i = 0; i < numWorkers; i++) {
     prep.state.emplace_back();
   }
