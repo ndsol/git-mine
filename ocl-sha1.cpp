@@ -330,12 +330,13 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     return 1;
   }
 
+  fprintf(stderr, "orig ctime=%lld\n", commit.committer_btime);
   CPUprep prep(dev, prog, commit);
   prep.atime_hint = atime_hint;
   prep.ctime_hint = ctime_hint;
 
   // Set context for each worker.
-  prep.ctimeCount = 32;
+  prep.ctimeCount = 64;
   static const size_t numWorkers = 32*1024;
   for (size_t i = 0; i < numWorkers; i++) {
     prep.state.emplace_back();
@@ -352,10 +353,15 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
 
   typedef std::chrono::steady_clock Clock;
   auto t0 = Clock::now();
+  auto t_ctimeCheck = t0;
   long long last_work = 0;
   size_t good = 0;
   while (!good) {
     auto t1 = Clock::now();
+    std::chrono::duration<float> ctimeCheck_duration = t1 - t_ctimeCheck;
+    float ctimeCheck = ctimeCheck_duration.count();
+    t_ctimeCheck = t1;
+
     std::chrono::duration<float> sec_duration = t1 - t0;
     float sec = sec_duration.count();
 
@@ -364,8 +370,8 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       t0 = t1;
       r = float(last_work)/sec * 1e-6;
       last_work = 0;
-      fprintf(stderr, "%.1fs %6.3fM/s try ctime %lld\n", sec, r,
-              prep.ctime_hint);
+      fprintf(stderr, "%.1fs %6.3fM/s try ctime %lld (batches of %u, %.6f)\n", sec,
+              r, prep.ctime_hint, prep.ctimeCount, ctimeCheck);
     }
     if (prep.start({ prep.state.size() })) {
       fprintf(stderr, "prep.start failed\n");
@@ -380,6 +386,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       fprintf(stderr, "waitWritten or next buildGPUbuf failed\n");
       return 1;
     }
+    // Wait until the GPU finishes (this also copies results to the CPU)
     if (prep.wait()) {
       fprintf(stderr, "prep.wait failed\n");
       return 1;

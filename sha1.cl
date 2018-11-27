@@ -361,28 +361,7 @@ static const uint32_t __constant blake2b_sigma32[12][4] = {
   { 0x0e0a0408, 0x090f0d06, 0x010c0002, 0x0b070503 } ,
 };
 
-// Next optimization: create another G32 that splits vvb into sep vars.
-// This will reduce a lot of the copying around in ROUND
-// vv[18/2] can be completely eliminated
-
-#define G32(r,i1,vva,vvb,vvc,vvd) \
-  do { \
-    vva += vvb;                            \
-    unsigned int s = blake2b_sigma32[r][i1/2]; \
-    vva.s0 += m[s >> 24]; \
-    vva.s1 += m[(s >> 8) & 0xf]; \
-    vvd = rotr(vvd ^ vva, 32lu);           \
-    vvc += vvd;                            \
-    vvb = rotr(vvb ^ vvc, 24lu);           \
-    vva += vvb;                            \
-    vva.s0 += m[(s >> 16) & 0xf]; \
-    vva.s1 += m[s & 0xf]; \
-    vvd = rotr(vvd ^ vva, 16lu);           \
-    vvc += vvd;                            \
-    vvb = rotr(vvb ^ vvc, 63lu);           \
-  } while (0)
-
-#define G32splitB(r,i1,vva,vb1,vb2,vvc,vvd) \
+#define G32(r,i1,vva,vb1,vb2,vvc,vvd) \
   do { \
     unsigned int s = blake2b_sigma32[r][i1/2]; \
     vva += (ulong2) (vb1 + m[s >> 24], vb2 + m[(s >> 8) & 0xf]); \
@@ -398,10 +377,10 @@ static const uint32_t __constant blake2b_sigma32[12][4] = {
   } while (0)
 
 #define G2v(r,i1,a,b,c,d) \
-  G32(r,i1,vv[a/2],vv[b/2],vv[c/2],vv[d/2])
+  G32(r,i1,vv[a/2],vv[b/2].s0,vv[b/2].s1,vv[c/2],vv[d/2])
 
 #define G2vsplit(r,i1,a,vb1,vb2,c,d) \
-  G32splitB(r,i1,vv[a/2],vb1,vb2,vv[c/2],vv[d/2])
+  G32(r,i1,vv[a/2],vb1,vb2,vv[c/2],vv[d/2])
 
 #define ROUND(r)           \
   do {                     \
