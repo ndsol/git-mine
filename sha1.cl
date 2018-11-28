@@ -357,9 +357,8 @@ static const uint32_t __constant blake2b_sigma32[12][4] = {
   { 0x0e0a0408, 0x090f0d06, 0x010c0002, 0x0b070503 } ,
 };
 
-#define G32(r,i1,vva,vb1,vb2,vvc,vvd) \
+#define G32(s,vva,vb1,vb2,vvc,vvd) \
   do { \
-    unsigned int s = blake2b_sigma32[r][i1/2]; \
     vva += (ulong2) (vb1 + m[s >> 24], vb2 + m[(s >> 8) & 0xf]); \
     vvd = rotr(vvd ^ vva, 32lu);           \
     vvc += vvd;                            \
@@ -372,20 +371,24 @@ static const uint32_t __constant blake2b_sigma32[12][4] = {
     vb2 = rotr(vb2 ^ vvc.s1, 63lu);        \
   } while (0)
 
-#define G2v(r,i1,a,b,c,d) \
-  G32(r,i1,vv[a/2],vv[b/2].s0,vv[b/2].s1,vv[c/2],vv[d/2])
+#define G2v(s,a,b,c,d) \
+  G32(s,vv[a/2],vv[b/2].s0,vv[b/2].s1,vv[c/2],vv[d/2])
 
-#define G2vsplit(r,i1,a,vb1,vb2,c,d) \
-  G32(r,i1,vv[a/2],vb1,vb2,vv[c/2],vv[d/2])
+#define G2vsplit(s,a,vb1,vb2,c,d) \
+  G32(s,vv[a/2],vb1,vb2,vv[c/2],vv[d/2])
 
 #define ROUND(r)           \
   do {                     \
-    G2v(r,0, 0, 4, 8,12); \
-    G2v(r,2, 2, 6,10,14); \
+    unsigned int s = blake2b_sigma32[r][0]; \
+    G2v(s, 0, 4, 8,12); \
+    s = blake2b_sigma32[r][1]; \
+    G2v(s, 2, 6,10,14); \
     vv[16/2] = (ulong2)(vv[15/2].s1, vv[12/2].s0); \
-    G2vsplit(r,4, 0,vv[5/2].s1,vv[6/2].s0,10,16); \
+    s = blake2b_sigma32[r][2]; \
+    G2vsplit(s, 0,vv[5/2].s1,vv[6/2].s0,10,16); \
     vv[12/2] = (ulong2)(vv[13/2].s1, vv[14/2].s0); \
-    G2vsplit(r,6, 2,vv[7/2].s1,vv[4/2].s0, 8,12); \
+    s = blake2b_sigma32[r][3]; \
+    G2vsplit(s, 2,vv[7/2].s1,vv[4/2].s0, 8,12); \
     vv[14/2] = (ulong2)(vv[13/2].s1, vv[16/2].s0); \
     vv[12/2] = (ulong2)(vv[17/2].s1, vv[12/2].s0); \
   } while(0)
@@ -469,41 +472,30 @@ static inline void blake2b_update(__constant B2SHAconst* fixed,
 
   // begin blake2b_update:
   uint32_t rem = fixed->bytesRemaining;
+  #define B2_128_PER_64 (2)
   while (rem > B2_128BYTES) {
-    unsigned i;
-    for (i = 0; i < UINT_64BYTES; i++) {
+    for (unsigned i = 0; i < UINT_64BYTES*B2_128_PER_64; i++) {
       S->buf[i] = src->buffer[i];
-    }
-    src++;
-    for (; i < UINT_64BYTES*2; i++) {
-      S->buf[i] = src->buffer[i - UINT_64BYTES];
     }
     blake2b_increment_counter(S, B2_128BYTES);
     blake2b_compress( fixed, S, S->buf );
-    src++;
+    src += B2_128_PER_64;
     rem -= B2_128BYTES;
   }
 
   // blake2b_final:
-  unsigned i;
-  for (i = 0; i < B2_128BYTES/4; i++) S->buf[i] = 0;
+  for (unsigned i = 0; i < B2_128BYTES/4; i++) S->buf[i] = 0;
   blake2b_increment_counter(S, rem);
   unsigned int words = (rem + sizeof(unsigned int) - 1)/sizeof(unsigned int);
-  for (i = 0; i < words && i < UINT_64BYTES; i++) {
-    S->buf[i] = src->buffer[i];
-  }
-  if (i < words) {
-    src++;
-    words -= UINT_64BYTES;
-    for (i = 0; i < words && i < UINT_64BYTES; i++) {
-      S->buf[i + UINT_64BYTES] = src->buffer[i];
-    }
-  }
+  for (unsigned i = 0; i < words; i++) S->buf[i] = src->buffer[i];
 
   // blake2b_set_lastblock(S) is a single line, so it is inlined as:
   S->f[0] = (uint64_t)-1;
   // Rely on any extra bytes copied from src->buffer to be 0.
   blake2b_compress( fixed, S, S->buf );
+  if (words > UINT_64BYTES) {
+    src++;
+  }
 }
 
 static void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
