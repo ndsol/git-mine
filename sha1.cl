@@ -331,7 +331,7 @@ typedef unsigned long uint64_t;
 // 17 exabytes are seen. You must then set BLAKE2_EXABYTE_NOT_EXPECTED (2)
 typedef struct
 {
-  uint32_t buf[B2_128BYTES / sizeof(uint32_t)];
+  uint64_t m[B2_128BYTES/sizeof(uint64_t)];
   uint64_t h[B2_OUTSIZE];
   uint64_t t[BLAKE2_EXABYTE_NOT_EXPECTED];
   uint64_t f[1];
@@ -344,12 +344,12 @@ typedef struct
 
 #define G32(s,vva,vb1,vb2,vvc,vvd) \
   do { \
-    vva += (ulong2) (vb1 + m[s >> 24], vb2 + m[(s >> 8) & 0xf]); \
+    vva += (ulong2) (vb1 + S->m[s >> 24], vb2 + S->m[(s >> 8) & 0xf]); \
     vvd = rotr(vvd ^ vva, 32lu);           \
     vvc += vvd;                            \
     vb1 = rotr(vb1 ^ vvc.s0, 24lu);        \
     vb2 = rotr(vb2 ^ vvc.s1, 24lu);        \
-    vva += (ulong2) (vb1 + m[(s >> 16) & 0xf], vb2 + m[s & 0xf]); \
+    vva += (ulong2) (vb1 + S->m[(s >> 16) & 0xf], vb2 + S->m[s & 0xf]); \
     vvd = rotr(vvd ^ vva, 16lu);           \
     vvc += vvd;                            \
     vb1 = rotr(vb1 ^ vvc.s0, 63lu);        \
@@ -376,14 +376,8 @@ typedef struct
 
 static void blake2b_compress(
     __constant B2SHAconst* fixed,
-    blake2b_state *S,
-    const uint32_t block[B2_128BYTES/sizeof(unsigned int)]) {
-  uint64_t m[16];
+    blake2b_state *S) {
   uint32_t i;
-
-  for( i = 0; i < 16; ++i ) {
-    m[i] = block[i*2] | ((uint64_t)block[i*2 + 1] << 32);
-  }
 
   ulong2 vv[9] = {
     { S->h[0], S->h[1] },
@@ -446,7 +440,6 @@ static inline void blake2b_update(__constant B2SHAconst* fixed,
 #endif
   S->f[0] = 0;
 
-  for (unsigned i = 0; i < sizeof(S->buf)/sizeof(S->buf[0]); i++) S->buf[i] = 0;
   for (unsigned i = 0; i < B2_OUTSIZE; i++) S->h[i] = fixed->b2iv[i];
 
   // xor with P->fanout       = 1;
@@ -457,25 +450,28 @@ static inline void blake2b_update(__constant B2SHAconst* fixed,
   uint32_t rem = fixed->bytesRemaining;
   #define B2_128_PER_64 (2)
   while (rem > B2_128BYTES) {
-    for (unsigned i = 0; i < UINT_64BYTES*B2_128_PER_64; i++) {
-      S->buf[i] = src->buffer[i];
+    for (unsigned i = 0; i < B2_128BYTES/sizeof(uint32_t); i += 2) {
+      S->m[i/2] = src->buffer[i] | ((uint64_t)src->buffer[i + 1] << 32);
     }
     blake2b_increment_counter(S, B2_128BYTES);
-    blake2b_compress( fixed, S, S->buf );
+    blake2b_compress(fixed, S);
     src += B2_128_PER_64;
     rem -= B2_128BYTES;
   }
 
   // blake2b_final:
-  for (unsigned i = 0; i < B2_128BYTES/4; i++) S->buf[i] = 0;
+  for (unsigned i = 0; i < B2_128BYTES/sizeof(uint64_t); i++) S->m[i] = 0;
   blake2b_increment_counter(S, rem);
-  unsigned int words = (rem + sizeof(unsigned int) - 1)/sizeof(unsigned int);
-  for (unsigned i = 0; i < words; i++) S->buf[i] = src->buffer[i];
+  unsigned int words = (rem + sizeof(uint64_t) - 1)/sizeof(uint64_t);
+  words *= 2;
+  for (unsigned i = 0; i < words; i += 2) {
+    S->m[i/2] = src->buffer[i] | ((uint64_t)src->buffer[i + 1] << 32);
+  }
 
   // blake2b_set_lastblock(S) is a single line, so it is inlined as:
   S->f[0] = (uint64_t)-1;
   // Rely on any extra bytes copied from src->buffer to be 0.
-  blake2b_compress( fixed, S, S->buf );
+  blake2b_compress(fixed, S);
   if (words > UINT_64BYTES) {
     src++;
   }
