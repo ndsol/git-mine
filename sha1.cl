@@ -273,9 +273,7 @@ static void sha1(__constant B2SHAconst* fixed,
   hash[3] = fixed->shaiv[3];
   hash[4] = fixed->shaiv[4];
 
-  unsigned int bytesRemaining = fixed->bytesRemaining;
-  int i;
-  for (i = 0; bytesRemaining; i++, src++) {
+  for (unsigned int rem = fixed->bytesRemaining/(UINT_64BYTES*4);;) {
     union {
       uint4 V[UINT_64BYTES/4];
       unsigned int u[UINT_64BYTES];
@@ -287,19 +285,16 @@ static void sha1(__constant B2SHAconst* fixed,
     }
 
     // If this will be the last loop and some of {padding,len} should be added.
-    if (bytesRemaining < 64) {
-      bytesRemaining = 0;
-      if (tail != 0) {
-        write_padding(W.V, fixed);
-        if (tail < 56) {
-          write_len(W.V, fixed);
-        }
+    if (rem == 0 && tail != 0) {
+      write_padding(W.V, fixed);
+      if (tail < 56) {
+        write_len(W.V, fixed);
       }
-    } else {
-      bytesRemaining -= 64;
     }
-
+    src++;
     sha1_update(W.V, hash);
+    if (rem == 0) break;
+    rem--;
   }
 
   // If an additional block is needed just to be able to fit len
@@ -309,7 +304,6 @@ static void sha1(__constant B2SHAconst* fixed,
       write_padding(WV, fixed);
     }
     write_len(WV, fixed);
-
     sha1_update(WV, hash);
   }
 }

@@ -101,8 +101,14 @@ int findHash(OpenCLdev& dev, const CommitMessage& commit,
   fclose(f);
   codeBuf[rresult] = 0;
   OpenCLprog prog(codeBuf, dev);
-  // Helpful to try: -cl-nv-maxrregcount=128 or 132
-  if (prog.open("main", "-cl-nv-verbose -cl-nv-maxrregcount=128")) {
+  const char* compilerOptions = "";
+  // This is controlled different on AMD: see
+  // __attribute__((reqd_work_group_size(64,1,1))) such as in
+  // https://community.amd.com/thread/158594
+  if (dev.info.vendor.find("NVIDIA") != std::string::npos) {
+    compilerOptions = "-cl-nv-verbose -cl-nv-maxrregcount=128";
+  }
+  if (prog.open("main", compilerOptions)) {
     fprintf(stderr, "open(main) failed\n");
     return 1;
   }
