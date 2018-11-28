@@ -343,36 +343,34 @@ typedef struct
   unsigned int shahash[SHA_DIGEST_LEN];
 } blake2b_state;
 
-#define G32(s,vva,vb1,vb2,vvc,vvd) \
+#define G32(s,vva,vb1,vb2,vvc,vd1,vd2) \
   do { \
     vva += (ulong2) (vb1 + S->m[s >> 24], vb2 + S->m[(s >> 8) & 0xf]); \
-    vvd = rotr(vvd ^ vva, 32lu);           \
-    vvc += vvd;                            \
+    vd1 = rotr(vd1 ^ vva.s0, 32lu);        \
+    vd2 = rotr(vd2 ^ vva.s1, 32lu);        \
+    vvc += (ulong2) (vd1, vd2);            \
     vb1 = rotr(vb1 ^ vvc.s0, 24lu);        \
     vb2 = rotr(vb2 ^ vvc.s1, 24lu);        \
     vva += (ulong2) (vb1 + S->m[(s >> 16) & 0xf], vb2 + S->m[s & 0xf]); \
-    vvd = rotr(vvd ^ vva, 16lu);           \
-    vvc += vvd;                            \
+    vd1 = rotr(vd1 ^ vva.s0, 16lu);        \
+    vd2 = rotr(vd2 ^ vva.s1, 16lu);        \
+    vvc += (ulong2) (vd1, vd2);            \
     vb1 = rotr(vb1 ^ vvc.s0, 63lu);        \
     vb2 = rotr(vb2 ^ vvc.s1, 63lu);        \
   } while (0)
 
 #define G2v(s,a,b,c,d) \
-  G32(s,vv[a/2],vv[b/2].s0,vv[b/2].s1,vv[c/2],vv[d/2])
+  G32(s,vv[a/2],vv[b/2].s0,vv[b/2].s1,vv[c/2],vv[d/2].s0,vv[d/2].s1)
 
-#define G2vsplit(s,a,vb1,vb2,c,d) \
-  G32(s,vv[a/2],vb1,vb2,vv[c/2],vv[d/2])
+#define G2vsplit(s,a,vb1,vb2,c,vd1,vd2) \
+  G32(s,vv[a/2],vb1,vb2,vv[c/2],vd1,vd2)
 
 #define ROUND(sig0, sig1, sig2, sig3) \
   do {                     \
     G2v(sig0, 0, 4, 8,12); \
     G2v(sig1, 2, 6,10,14); \
-    vv[16/2] = (ulong2)(vv[15/2].s1, vv[12/2].s0); \
-    G2vsplit(sig2, 0,vv[5/2].s1,vv[6/2].s0,10,16); \
-    vv[12/2] = (ulong2)(vv[13/2].s1, vv[14/2].s0); \
-    G2vsplit(sig3, 2,vv[7/2].s1,vv[4/2].s0, 8,12); \
-    vv[14/2] = (ulong2)(vv[13/2].s1, vv[16/2].s0); \
-    vv[12/2] = (ulong2)(vv[17/2].s1, vv[12/2].s0); \
+    G2vsplit(sig2, 0,vv[5/2].s1,vv[6/2].s0,10,vv[15/2].s1,vv[12/2].s0); \
+    G2vsplit(sig3, 2,vv[7/2].s1,vv[4/2].s0, 8,vv[13/2].s1,vv[14/2].s0); \
   } while(0)
 
 static void blake2b_compress(
