@@ -312,10 +312,6 @@ static void sha1(__constant B2SHAconst* fixed,
 
     sha1_update(WV, hash);
   }
-
-  for (i = 0; i < SHA_DIGEST_LEN; i++) {
-    hash[i] = swap(hash[i]);
-  }
 }
 
 
@@ -366,9 +362,9 @@ typedef struct
   G32(s,vv[a/2],vb1,vb2,vv[c/2],vd1,vd2)
 
 #define ROUND(sig0, sig1, sig2, sig3) \
-  do {                     \
-    G2v(sig0, 0, 4, 8,12); \
-    G2v(sig1, 2, 6,10,14); \
+  do {                                \
+    G2v     (sig0, 0, 4, 8,12);       \
+    G2v     (sig1, 2, 6,10,14);       \
     G2vsplit(sig2, 0,vv[5/2].s1,vv[6/2].s0,10,vv[15/2].s1,vv[12/2].s0); \
     G2vsplit(sig3, 2,vv[7/2].s1,vv[4/2].s0, 8,vv[13/2].s1,vv[14/2].s0); \
   } while(0)
@@ -376,7 +372,6 @@ typedef struct
 static void blake2b_compress(
     __constant B2SHAconst* fixed,
     blake2b_state *S) {
-  uint32_t i;
 
   ulong2 vv[9] = {
     { S->h[0], S->h[1] },
@@ -409,7 +404,7 @@ static void blake2b_compress(
   ROUND(0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f);
   ROUND(0x0e0a0408, 0x090f0d06, 0x010c0002, 0x0b070503);
 
-  for( i = 0; i < B2_OUTSIZE/2; ++i ) {
+  for (unsigned i = 0; i < B2_OUTSIZE/2; ++i) {
     ulong2 x = vv[i] ^ vv[i + 4];
     S->h[i*2  ] ^= x.s0;
     S->h[i*2+1] ^= x.s1;
@@ -501,18 +496,19 @@ static void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
   }
 }
 
+// S->shahash has not been run through swap() yet, so it is big-endian.
 static void compareB2SHA(__global B2SHAstate* state, blake2b_state* S) {
   unsigned int bits;
   for (bits = 0; bits < B2H_DIGEST_LEN*sizeof(unsigned long); bits++) {
     unsigned long b2h = S->h[bits/sizeof(unsigned long)];
     b2h >>= 8*mod(bits, sizeof(unsigned long));
-    if ((b2h & 0xff) == (S->shahash[0] & 0xff)) {
+    if ((b2h & 0xff) == (S->shahash[0] >> 24)) {
       unsigned int i;
       for (i = 1; i < SHA_DIGEST_LEN*sizeof(unsigned int); i++) {
         if (bits + i >= B2H_DIGEST_LEN*sizeof(unsigned long)) break;
 
         unsigned int sha = S->shahash[i/sizeof(unsigned int)];
-        sha >>= 8*mod(i, sizeof(unsigned int));
+        sha >>= 24 - 8*mod(i, sizeof(unsigned int));
         sha &= 0xff;
         b2h = S->h[(bits+i)/sizeof(unsigned long)];
         b2h = (b2h >> (8*mod(bits+i, sizeof(unsigned long)))) & 0xff;
@@ -584,7 +580,7 @@ __kernel void main(__constant B2SHAconst* fixed,
     state->ctimeCount--;
   }
   for (unsigned int i = 0; i < SHA_DIGEST_LEN; i++) {
-    state->hash[i] = S.shahash[i];
+    state->hash[i] = swap(S.shahash[i]);
   }
   // Things that might speed it up:
   // 1. OpenCL best practices:
