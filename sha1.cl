@@ -342,21 +342,6 @@ typedef struct
   unsigned int shahash[SHA_DIGEST_LEN];
 } blake2b_state;
 
-static const uint32_t __constant blake2b_sigma32[12][4] = {
-  { 0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f } ,
-  { 0x0e0a0408, 0x090f0d06, 0x010c0002, 0x0b070503 } ,
-  { 0x0b080c00, 0x05020f0d, 0x0a0e0306, 0x07010904 } ,
-  { 0x07090301, 0x0d0c0b0e, 0x0206050a, 0x04000f08 } ,
-  { 0x09000507, 0x02040a0f, 0x0e010b0c, 0x0608030d } ,
-  { 0x020c060a, 0x000b0803, 0x040d0705, 0x0f0e0109 } ,
-  { 0x0c05010f, 0x0e0d040a, 0x00070603, 0x0902080b } ,
-  { 0x0d0b070e, 0x0c010309, 0x05000f04, 0x0806020a } ,
-  { 0x060f0e09, 0x0b030008, 0x0c020d07, 0x01040a05 } ,
-  { 0x0a020804, 0x07060105, 0x0f0b090e, 0x030c0d00 } ,
-  { 0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f } ,
-  { 0x0e0a0408, 0x090f0d06, 0x010c0002, 0x0b070503 } ,
-};
-
 #define G32(s,vva,vb1,vb2,vvc,vvd) \
   do { \
     vva += (ulong2) (vb1 + m[s >> 24], vb2 + m[(s >> 8) & 0xf]); \
@@ -377,18 +362,14 @@ static const uint32_t __constant blake2b_sigma32[12][4] = {
 #define G2vsplit(s,a,vb1,vb2,c,d) \
   G32(s,vv[a/2],vb1,vb2,vv[c/2],vv[d/2])
 
-#define ROUND(r)           \
+#define ROUND(sig0, sig1, sig2, sig3) \
   do {                     \
-    unsigned int s = blake2b_sigma32[r][0]; \
-    G2v(s, 0, 4, 8,12); \
-    s = blake2b_sigma32[r][1]; \
-    G2v(s, 2, 6,10,14); \
+    G2v(sig0, 0, 4, 8,12); \
+    G2v(sig1, 2, 6,10,14); \
     vv[16/2] = (ulong2)(vv[15/2].s1, vv[12/2].s0); \
-    s = blake2b_sigma32[r][2]; \
-    G2vsplit(s, 0,vv[5/2].s1,vv[6/2].s0,10,16); \
+    G2vsplit(sig2, 0,vv[5/2].s1,vv[6/2].s0,10,16); \
     vv[12/2] = (ulong2)(vv[13/2].s1, vv[14/2].s0); \
-    s = blake2b_sigma32[r][3]; \
-    G2vsplit(s, 2,vv[7/2].s1,vv[4/2].s0, 8,12); \
+    G2vsplit(sig3, 2,vv[7/2].s1,vv[4/2].s0, 8,12); \
     vv[14/2] = (ulong2)(vv[13/2].s1, vv[16/2].s0); \
     vv[12/2] = (ulong2)(vv[17/2].s1, vv[12/2].s0); \
   } while(0)
@@ -422,18 +403,18 @@ static void blake2b_compress(
     { 0, 0 },
   };
 
-  ROUND( 0 );
-  ROUND( 1 );
-  ROUND( 2 );
-  ROUND( 3 );
-  ROUND( 4 );
-  ROUND( 5 );
-  ROUND( 6 );
-  ROUND( 7 );
-  ROUND( 8 );
-  ROUND( 9 );
-  ROUND( 10 );
-  ROUND( 11 );
+  ROUND(0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f);
+  ROUND(0x0e0a0408, 0x090f0d06, 0x010c0002, 0x0b070503);
+  ROUND(0x0b080c00, 0x05020f0d, 0x0a0e0306, 0x07010904);
+  ROUND(0x07090301, 0x0d0c0b0e, 0x0206050a, 0x04000f08);
+  ROUND(0x09000507, 0x02040a0f, 0x0e010b0c, 0x0608030d);
+  ROUND(0x020c060a, 0x000b0803, 0x040d0705, 0x0f0e0109);
+  ROUND(0x0c05010f, 0x0e0d040a, 0x00070603, 0x0902080b);
+  ROUND(0x0d0b070e, 0x0c010309, 0x05000f04, 0x0806020a);
+  ROUND(0x060f0e09, 0x0b030008, 0x0c020d07, 0x01040a05);
+  ROUND(0x0a020804, 0x07060105, 0x0f0b090e, 0x030c0d00);
+  ROUND(0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f);
+  ROUND(0x0e0a0408, 0x090f0d06, 0x010c0002, 0x0b070503);
 
   for( i = 0; i < B2_OUTSIZE/2; ++i ) {
     ulong2 x = vv[i] ^ vv[i + 4];
@@ -442,7 +423,9 @@ static void blake2b_compress(
   }
 }
 
-#undef G
+#undef G32
+#undef G2v
+#undef G2vsplit
 #undef ROUND
 
 static inline void blake2b_increment_counter(blake2b_state *S, uint64_t inc) {
