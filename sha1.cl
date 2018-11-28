@@ -24,8 +24,9 @@
  */
 
 #define UINT_64BYTES (64/sizeof(unsigned int))
-typedef struct {
+typedef union {
   unsigned int buffer[UINT_64BYTES];
+  unsigned long buf64[UINT_64BYTES/2];
 } B2SHAbuffer;
 
 #define SHA_DIGEST_LEN (5)
@@ -448,14 +449,13 @@ static inline void blake2b_update(__constant B2SHAconst* fixed,
 
   // begin blake2b_update:
   uint32_t rem = fixed->bytesRemaining;
-  #define B2_128_PER_64 (2)
   while (rem > B2_128BYTES) {
-    for (unsigned i = 0; i < B2_128BYTES/sizeof(uint32_t); i += 2) {
-      S->m[i/2] = src->buffer[i] | ((uint64_t)src->buffer[i + 1] << 32);
+    for (unsigned i = 0; i < B2_128BYTES/sizeof(uint64_t); i++) {
+      S->m[i] = src->buf64[i];
     }
     blake2b_increment_counter(S, B2_128BYTES);
     blake2b_compress(fixed, S);
-    src += B2_128_PER_64;
+    src += B2_128BYTES/sizeof(*src);
     rem -= B2_128BYTES;
   }
 
@@ -463,9 +463,8 @@ static inline void blake2b_update(__constant B2SHAconst* fixed,
   for (unsigned i = 0; i < B2_128BYTES/sizeof(uint64_t); i++) S->m[i] = 0;
   blake2b_increment_counter(S, rem);
   unsigned int words = (rem + sizeof(uint64_t) - 1)/sizeof(uint64_t);
-  words *= 2;
-  for (unsigned i = 0; i < words; i += 2) {
-    S->m[i/2] = src->buffer[i] | ((uint64_t)src->buffer[i + 1] << 32);
+  for (unsigned i = 0; i < words; i++) {
+    S->m[i] = src->buf64[i];
   }
 
   // blake2b_set_lastblock(S) is a single line, so it is inlined as:
