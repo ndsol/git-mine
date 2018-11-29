@@ -33,6 +33,9 @@ typedef union {
 #define B2H_DIGEST_LEN (8)
 typedef struct {
   unsigned long b2iv[B2H_DIGEST_LEN];
+  uint4 lastfullpadding;
+  uint4 lastfulllen;
+  uint4 zeropaddingandlen;
   unsigned int shaiv[SHA_DIGEST_LEN];
   unsigned int len;  // The overall length of the message to digest.
   unsigned int bytesRemaining;  // Bytes to be digested on the GPU.
@@ -247,22 +250,6 @@ static void sha1_update(uint4 *WV, unsigned int *digest) {
 }
 
 
-#define tail mod(fixed->len, 64)
-static inline void write_padding(uint4* WV, __constant B2SHAconst* fixed) {
-  unsigned int padding = 0x80 << (24 - mod(fixed->len, 4)*8);
-  switch (mod(fixed->len, 16)/4) {
-    case 0: WV[tail/16].s0 |= padding; break;
-    case 1: WV[tail/16].s1 |= padding; break;
-    case 2: WV[tail/16].s2 |= padding; break;
-    case 3: WV[tail/16].s3 |= padding; break;
-  }
-}
-
-static inline void write_len(uint4* WV, __constant B2SHAconst* fixed) {
-  WV[3].s2 = fixed->len >> (32-3);
-  WV[3].s3 = fixed->len << 3;
-}
-
 static void sha1(__constant B2SHAconst* fixed,
                  __global B2SHAstate* state,
                  __global const B2SHAbuffer* src,
@@ -273,11 +260,11 @@ static void sha1(__constant B2SHAconst* fixed,
   hash[3] = fixed->shaiv[3];
   hash[4] = fixed->shaiv[4];
 
+  union {
+    uint4 V[UINT_64BYTES/4];
+    unsigned int u[UINT_64BYTES];
+  } W;
   for (unsigned int rem = fixed->bytesRemaining/(UINT_64BYTES*4);;) {
-    union {
-      uint4 V[UINT_64BYTES/4];
-      unsigned int u[UINT_64BYTES];
-    } W;
     // Copy 64 bytes from src->buffer[], swapping to big-endian.
     // NOTE: src->buffer[] bytes past "bytesRemaining" *must* be provided as 0.
     for (int j = 0; j < UINT_64BYTES; j++) {
@@ -285,11 +272,9 @@ static void sha1(__constant B2SHAconst* fixed,
     }
 
     // If this will be the last loop and some of {padding,len} should be added.
-    if (rem == 0 && tail != 0) {
-      write_padding(W.V, fixed);
-      if (tail < 56) {
-        write_len(W.V, fixed);
-      }
+    if (rem == 0) {
+      W.V[(fixed->len & 63)/16] |= fixed->lastfullpadding;
+      W.V[3] |= fixed->lastfulllen;
     }
     src++;
     sha1_update(W.V, hash);
@@ -298,13 +283,12 @@ static void sha1(__constant B2SHAconst* fixed,
   }
 
   // If an additional block is needed just to be able to fit len
-  if (tail >= 56) {
-    uint4 WV[UINT_64BYTES/4] = {0, 0, 0, 0};
-    if (tail == 0) {
-      write_padding(WV, fixed);
-    }
-    write_len(WV, fixed);
-    sha1_update(WV, hash);
+  if (fixed->zeropaddingandlen.s3) {
+    W.V[0] = 0;
+    W.V[1] = 0;
+    W.V[2] = 0;
+    W.V[3] = fixed->zeropaddingandlen;
+    sha1_update(W.V, hash);
   }
 }
 

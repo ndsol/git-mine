@@ -45,9 +45,21 @@ struct B2SHAconst {
     for (size_t i = 0; i < B2H_DIGEST_LEN; i++) {
       b2iv[i] = blake2b_IV[i];
     }
+    for (size_t i = 0; i < 4; i++) {
+      lastfullpadding[i] = 0;
+    }
+    for (size_t i = 0; i < 4; i++) {
+      lastfulllen[i] = 0;
+    }
+    for (size_t i = 0; i < 4; i++) {
+      zeropaddingandlen[i] = 0;
+    }
   }
 
   uint64_t b2iv[B2H_DIGEST_LEN];
+  uint32_t lastfullpadding[4];
+  uint32_t lastfulllen[4];
+  uint32_t zeropaddingandlen[4];
   uint32_t shaiv[SHA_DIGEST_LEN];
 
   uint32_t len;  // The overall length of the message to digest.
@@ -113,6 +125,15 @@ struct CPUprep {
       return 1;
     }
     return 0;
+  }
+
+  void writePadding(uint32_t* a, size_t len) {
+    a[(len/4) & 3] = 0x80 << (24 - (len & 3)*8);
+  }
+
+  void writeLen(uint32_t* a, size_t len) {
+    a[2] = len >> (32-3);
+    a[3] = len << 3;
   }
 
   // buildGPUbuf creates gpubuf and populates it from commit.
@@ -202,6 +223,15 @@ struct CPUprep {
         fixed.at(0).len = buf.size();
         fixed.at(0).bytesRemaining = buf.size();
         fixed.at(0).buffers = cpubuf.size();
+        if ((buf.size() & 63) != 0) {
+          writePadding(fixed.at(0).lastfullpadding, buf.size());
+          if ((buf.size() & 63) < 56) {
+            writeLen(fixed.at(0).lastfulllen, buf.size());
+          }
+        } else {
+          writePadding(fixed.at(0).zeropaddingandlen, buf.size());
+          writeLen(fixed.at(0).zeropaddingandlen, buf.size());
+        }
       }
     }
 
