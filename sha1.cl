@@ -351,7 +351,7 @@ static void blake2b_compress(
     __constant B2SHAconst* fixed,
     blake2b_state *S) {
 
-  ulong2 vv[9] = {
+  ulong2 vv[8] = {
     { S->h[0], S->h[1] },
     { S->h[2], S->h[3] },
     { S->h[4], S->h[5] },
@@ -366,7 +366,6 @@ static void blake2b_compress(
 #endif
     { fixed->b2iv[6] ^ S->f[0],
       fixed->b2iv[7] /* ^ S->f[1] removed: no last_node */ },
-    { 0, 0 },
   };
 
   ROUND(0x00010203, 0x04050607, 0x08090a0b, 0x0c0d0e0f);
