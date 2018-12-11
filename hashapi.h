@@ -226,12 +226,28 @@ public:
   std::string committer_time;
   std::string committer_tz;
   std::string log;
-  long long author_btime;
-  long long committer_btime;
 
   std::string toRawString() const {
     return parent + author + author_time + author_tz + committer +
            committer_time + committer_tz + log;
+  }
+
+  long long atime() const {
+    return author_btime;
+  }
+
+  void set_atime(long long atime) {
+    author_btime = atime;
+    author_time = std::to_string(atime);
+  }
+
+  long long ctime() const {
+    return committer_btime;
+  }
+
+  void set_ctime(long long ctime) {
+    committer_btime = ctime;
+    committer_time = std::to_string(ctime);
   }
 
   static int parseTimestamp(std::string* packed, std::string* thetime,
@@ -263,6 +279,10 @@ public:
     packed->erase(packed->begin() + (s - packed->c_str()), packed->end());
     return 0;
   }
+
+ protected:
+  long long author_btime;
+  long long committer_btime;
 };
 
 class CommitReader {

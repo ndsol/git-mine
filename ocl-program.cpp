@@ -35,6 +35,7 @@ int OpenCLprog::open(const char* mainFuncName, std::string buildargs /*= ""*/) {
     fprintf(stderr, "validation: OpenCLprog::open called twice\n");
     return 1;
   }
+  funcName = mainFuncName;
   const char* pCode = code;
   cl_int v;
   prog = clCreateProgramWithSource(dev.getContext(), 1, &pCode, NULL, &v);

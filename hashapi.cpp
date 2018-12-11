@@ -33,8 +33,8 @@ static void handle_SIGPIPE(int) {
 
 int doGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
                 CommitMessage& noodle) {
-  fprintf(stderr, "Th%zu author time = %lld\n", thId, noodle.author_btime);
-  fprintf(stderr, "Th%zu committer   = %lld\n", thId, noodle.committer_btime);
+  fprintf(stderr, "Th%zu author time = %lld\n", thId, noodle.atime());
+  fprintf(stderr, "Th%zu committer   = %lld\n", thId, noodle.ctime());
   fprintf(stderr, "Th%zu sha1: ", thId);
   char buf[1024];
   if (sha.dump(buf, sizeof(buf))) {

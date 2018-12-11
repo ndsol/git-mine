@@ -24,6 +24,7 @@ public:
 
   const char* const code;
   OpenCLdev& dev;
+  std::string funcName;
 
   char* getBuildLog() {
     return reinterpret_cast<char*>(getProgramBuildInfo(CL_PROGRAM_BUILD_LOG));
@@ -46,6 +47,16 @@ public:
   }
 
   cl_kernel getKern() const { return kern; }
+  int copyFrom(OpenCLprog& other, const char* mainFuncName) {
+    prog = other.prog;
+    cl_int v;
+    kern = clCreateKernel(prog, mainFuncName, &v);
+    if (v != CL_SUCCESS) {
+      fprintf(stderr, "%s failed: %d %s\n", "clCreateKernel", v, clerrstr(v));
+      return 1;
+    }
+    return 0;
+  }
 
 private:
   void* getProgramBuildInfo(cl_program_build_info field);
@@ -98,7 +109,7 @@ public:
   // writeBuffer does a non-blocking write
   template<typename T>
   int writeBuffer(cl_mem hnd, const std::vector<T>& src) {
-    cl_int v = clEnqueueWriteBuffer(handle, hnd, CL_TRUE /*blocking*/,
+    cl_int v = clEnqueueWriteBuffer(handle, hnd, CL_FALSE /*blocking*/,
         0 /*offset*/, sizeof(src[0]) * src.size(),
         reinterpret_cast<const void*>(src.data()), 0, NULL, NULL);
     if (v != CL_SUCCESS) {
@@ -113,7 +124,7 @@ public:
   // will be signalled when it completes.
   template<typename T>
   int writeBuffer(cl_mem hnd, const std::vector<T>& src, cl_event& complete) {
-    cl_int v = clEnqueueWriteBuffer(handle, hnd, CL_TRUE /*blocking*/,
+    cl_int v = clEnqueueWriteBuffer(handle, hnd, CL_FALSE /*blocking*/,
         0 /*offset*/, sizeof(src[0]) * src.size(),
         reinterpret_cast<const void*>(src.data()), 0, NULL, &complete);
     if (v != CL_SUCCESS) {
@@ -141,7 +152,7 @@ public:
   // readBufferNonBlock does a non-blocking read
   template<typename T>
   int readBufferNonBlock(cl_mem hnd, std::vector<T>& dst, cl_event& complete) {
-    cl_int v = clEnqueueReadBuffer(handle, hnd, CL_TRUE /*blocking*/,
+    cl_int v = clEnqueueReadBuffer(handle, hnd, CL_FALSE /*blocking*/,
         0 /*offset*/, sizeof(dst[0]) * dst.size(),
         reinterpret_cast<void*>(dst.data()), 0, NULL, &complete);
     if (v != CL_SUCCESS) {

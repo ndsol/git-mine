@@ -100,16 +100,18 @@ int findHash(OpenCLdev& dev, const CommitMessage& commit,
   }
   fclose(f);
   codeBuf[rresult] = 0;
-  OpenCLprog prog(codeBuf, dev);
+  const char* mainFuncName = "main";
   const char* compilerOptions = "";
+
   // This is controlled different on AMD: see
   // __attribute__((reqd_work_group_size(64,1,1))) such as in
   // https://community.amd.com/thread/158594
   if (dev.info.vendor.find("NVIDIA") != std::string::npos) {
     compilerOptions = "-cl-nv-verbose -cl-nv-maxrregcount=128";
   }
-  if (prog.open("main", compilerOptions)) {
-    fprintf(stderr, "open(main) failed\n");
+  OpenCLprog prog(codeBuf, dev);
+  if (prog.open(mainFuncName, compilerOptions)) {
+    fprintf(stderr, "prog.open(%s) failed\n", mainFuncName);
     return 1;
   }
   dev.unloadPlatformCompiler();
@@ -205,7 +207,15 @@ int main(int argc, char ** argv) {
 
   CommitMessage commit;
   {
+#if 0
+    FILE* f = fopen("/tmp/t.txt", "r");
+    if (!f) {
+      fprintf(stderr, "fopen(/tmp/t.txt): %d %s\n", errno, strerror(errno));
+      return 1;
+    }
+#else
     FILE* f = stdin;
+#endif
     CommitReader reader(argv[0]);
     if (reader.read_from(f, &commit)) {
       return 1;

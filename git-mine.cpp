@@ -86,19 +86,19 @@ public:
       fprintf(stderr, "pool not empty - already started?\n");
       return;
     }
-    if (atime_hint < orig.author_btime) {
+    if (atime_hint < orig.atime()) {
       if (atime_hint) {
         fprintf(stderr, "invalid atime_hint %lld (must be at least %lld)\n",
-                atime_hint, orig.author_btime);
+                atime_hint, orig.atime());
       }
-      atime_hint = orig.author_btime;
+      atime_hint = orig.atime();
     }
-    if (ctime_hint < orig.committer_btime) {
+    if (ctime_hint < orig.ctime()) {
       if (ctime_hint) {
         fprintf(stderr, "invalid ctime_hint %lld (must be at least %lld)\n",
-                ctime_hint, orig.committer_btime);
+                ctime_hint, orig.ctime());
       }
-      ctime_hint = orig.committer_btime;
+      ctime_hint = orig.ctime();
     }
 
     // Lock bossMutex while adding threads to pool.
@@ -116,10 +116,8 @@ public:
     for (size_t i = 0; i < pool.size(); i++) {
       if (pool.at(i)->best >= wantBest) {
         fprintf(stderr, "Thread %zu says:\n", i);
-        noodle.author_btime = pool.at(i)->best_atime;
-        noodle.author_time = std::to_string(noodle.author_btime);
-        noodle.committer_btime = pool.at(i)->best_ctime;
-        noodle.committer_time = std::to_string(noodle.committer_btime);
+        noodle.set_atime(pool.at(i)->best_atime);
+        noodle.set_ctime(pool.at(i)->best_ctime);
         noodle.hash(sha, b2h);
         char buf[1024];
         if (sha.dump(buf, sizeof(buf))) {
@@ -282,7 +280,7 @@ private:
     // search returns 1 if a match was found or there is some other reason
     // to abort the search.
     int search(long long atime) {
-      float total_work = float(noodle.committer_btime - atime);
+      float total_work = float(noodle.ctime() - atime);
       // Use floats to trade off accuracy for avoiding overflow.
       long long my_work_start =
           (long long) ((float(id) * total_work) / float(idMax)) + atime;
@@ -298,8 +296,7 @@ private:
             return 1;
           }
         }
-        noodle.author_btime = t;
-        noodle.author_time = std::to_string(t);
+        noodle.set_atime(t);
         noodle.hash(sha, b2h);
         size_t matchlen = 0;
         int match = b2h.instr(sha.result, sizeof(sha.result), &matchlen);
@@ -307,7 +304,7 @@ private:
           if (matchlen > best) {
             best = matchlen;
             best_atime = t;
-            best_ctime = noodle.committer_btime;
+            best_ctime = noodle.ctime();
           }
           if (matchlen >= terminateAt) {
             // Signal that a match was found.
@@ -323,17 +320,15 @@ private:
     }
 
     void doWork() {
-      noodle.committer_btime = parent->ctime_hint;
-      noodle.committer_time = std::to_string(noodle.committer_btime);
+      noodle.set_ctime(parent->ctime_hint);
       for (;;) {
         if (search(parent->atime_hint)) {
           return;
         }
 
-        // Increment committer_btime and try again.
+        // Increment ctime and try again.
         commit_delta++;
-        noodle.committer_btime++;
-        noodle.committer_time = std::to_string(noodle.committer_btime);
+        noodle.set_time(noodle.ctime() + 1);
       }
     }
   };
