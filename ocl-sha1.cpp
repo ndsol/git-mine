@@ -506,7 +506,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     return 1;
   }
 
-  fprintf(stderr, "orig ctime=%lld  HINT: can use CU=24 WG=1024 as initial guess for numWorkers\n", commit.ctime());
+  fprintf(stderr, "orig ctime=%lld\n", commit.ctime());
   auto t0 = Clock::now();
 
   size_t prep_max = 2;
@@ -532,9 +532,8 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
   size_t prep_i = 0;
 
   // Set context for the ping-ponging CPUprep instances.
-  size_t maxWorkers = 64*1024;
-  //size_t numWorkers = 32*1024;
-  size_t numWorkers = 1024;
+  size_t numWorkers = dev.info.maxCU*dev.info.maxWG/2;
+  size_t maxWorkers = dev.info.maxCU*dev.info.maxWG*4;
   size_t ctimeCount = getCtimeCountFor(numWorkers, ctime_hint - atime_hint);
   for (size_t i = 0; i < prep.size(); i++) {
     prep.at(i).setCtimeCount(ctimeCount);
@@ -568,17 +567,15 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       if (!startedWorkSizing) {
         // Start walking up the capacity of the GPU with a larger batch.
         f = 2.0f;
+      } else if (work > prev_work) {
+        // Try a larger batch, and see how the GPU responds.
+        f = 2.0f;
       } else {
-        if (work > prev_work*1.05) {
-          // Try a larger batch, and see how the GPU responds.
-          f = 2.0f;
-        } else {
-          // This size did no good. Walk back one step and stop.
-          for (size_t i = 0; i < prep.size(); i++) {
-            prep.at(i).wantValidTime = 0;  // will set validTiming() false.
-          }
-          f = 0.5;
+        // This size did no good. Walk back one step and stop.
+        for (size_t i = 0; i < prep.size(); i++) {
+          prep.at(i).wantValidTime = 0;  // will set validTiming() false.
         }
+        f = 0.5;
       }
       startedWorkSizing = true;
 
@@ -632,7 +629,7 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
         total_work += prep.at(i).getWorkCount();
       }
       float r = float(total_work - last_work)/sec * 1e-6;
-      if (r > 500) {
+      if (r > 900) {
         r = 0;
       }
       last_work = total_work;
