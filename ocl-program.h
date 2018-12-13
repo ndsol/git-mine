@@ -67,13 +67,49 @@ private:
 
 class OpenCLevent {
 public:
-  OpenCLevent() {}
+  OpenCLevent() : handle(NULL) {}
   virtual ~OpenCLevent() {
     clReleaseEvent(handle);
   }
 
   void waitForSignal() {
     clWaitForEvents(1, &handle);
+  }
+
+  int getQueuedTime(cl_ulong& t) {
+    return getProfilingInfo(CL_PROFILING_COMMAND_QUEUED, t);
+  }
+
+  int getSubmitTime(cl_ulong& t) {
+    return getProfilingInfo(CL_PROFILING_COMMAND_SUBMIT, t);
+  }
+
+  int getStartTime(cl_ulong& t) {
+    return getProfilingInfo(CL_PROFILING_COMMAND_START, t);
+  }
+
+  int getEndTime(cl_ulong& t) {
+    return getProfilingInfo(CL_PROFILING_COMMAND_END, t);
+  }
+
+  int getProfilingInfo(cl_profiling_info param, cl_ulong& out) {
+    if (!handle) {
+      fprintf(stderr, "Event must first be passed to an Enqueue... function\n");
+      return 1;
+    }
+    size_t size_ret = 0;
+    cl_int v = clGetEventProfilingInfo(handle, param, sizeof(out), &out,
+                                       &size_ret);
+    if (v != CL_PROFILING_INFO_NOT_AVAILABLE && size_ret != sizeof(out)) {
+      fprintf(stderr, "%s: told to provide %zu bytes, want %zu bytes\n",
+              "OpenCLevent::getProfilingInfo", size_ret, sizeof(out));
+    }
+    if (v != CL_SUCCESS) {
+      fprintf(stderr, "%s failed: %d %s\n", "OpenCLevent::getProfilingInfo",
+              v, clerrstr(v));
+      return 1;
+    }
+    return 0;
   }
 
   cl_event handle;
@@ -90,14 +126,23 @@ public:
     }
   }
 
-  int open(const cl_queue_properties* props = NULL) {
+  int open(std::vector<cl_queue_properties> props =
+               std::vector<cl_queue_properties>{
+                 CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE,
+               }) {
     if (handle) {
       fprintf(stderr, "validation: OpenCLqueue::open called twice\n");
       return 1;
     }
-    int v;
+    cl_queue_properties* pprops = NULL;
+    if (props.size()) {
+      // Make sure props includes the required terminating 0.
+      props.push_back(0);
+      pprops = props.data();
+    }
+    cl_int v;
     handle = clCreateCommandQueueWithProperties(
-        dev.getContext(), dev.devId, props, &v);
+        dev.getContext(), dev.devId, pprops, &v);
     if (v != CL_SUCCESS) {
       fprintf(stderr, "%s failed: %d %s\n", "clCreateCommandQueue", v,
               clerrstr(v));
@@ -169,7 +214,7 @@ public:
                     const size_t* global_work_offset,
                     const size_t* global_work_size,
                     const size_t* local_work_size,
-                    cl_event* completeEvent,
+                    cl_event* completeEvent = NULL,
                     const std::vector<cl_event>& waitList
                         = std::vector<cl_event>()) {
     cl_int v = clEnqueueNDRangeKernel(handle, prog.getKern(), work_dim,
@@ -183,6 +228,17 @@ public:
       return 1;
     }
     return 0;
+  }
+
+  int NDRangeKernel(OpenCLprog& prog, cl_uint work_dim,
+                    const size_t* global_work_offset,
+                    const size_t* global_work_size,
+                    const size_t* local_work_size,
+                    OpenCLevent& completeEvent,
+                    const std::vector<cl_event>& waitList
+                        = std::vector<cl_event>()) {
+    return NDRangeKernel(prog, work_dim, global_work_offset, global_work_size,
+                         local_work_size, &completeEvent.handle, waitList);
   }
 
   int finish() {

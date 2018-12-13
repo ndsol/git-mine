@@ -30,7 +30,7 @@ int testOpenCL2(OpenCLdev& dev, OpenCLprog& p) {
   OpenCLevent completeEvent;
   std::vector<size_t> global_work_size{ numbers.size() };
   if (q.NDRangeKernel(p, global_work_size.size(), NULL, 
-                      global_work_size.data(), NULL, &completeEvent.handle)) {
+                      global_work_size.data(), NULL, completeEvent)) {
     return 1;
   }
   completeEvent.waitForSignal();

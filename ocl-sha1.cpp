@@ -112,9 +112,9 @@ struct CPUprep {
           const CommitMessage& commit, long long start_atime,
           long long start_ctime)
       : dev(dev), prog(prog), q(q), commit(commit), gpufixed(dev)
-      , gpustate(dev), gpubuf(dev), fixed(1), testOnly(0), total_work_done(0)
-      , global_start_atime(start_atime), global_start_ctime(start_ctime)
-      , ctimeCount(1) {}
+      , gpustate(dev), gpubuf(dev), fixed(1), testOnly(0), wantValidTime(1)
+      , prev_work_done(0), total_work_done(0), ctimeCount(1), timesValid(false)
+      , global_start_atime(start_atime), global_start_ctime(start_ctime) {}
 
   OpenCLdev& dev;
   OpenCLprog& prog;
@@ -130,6 +130,7 @@ struct CPUprep {
   std::vector<B2SHAconst> fixed;
   std::vector<B2SHAbuffer> cpubuf;
   int testOnly;
+  int wantValidTime;
 
   void writePadding(uint32_t* a, size_t len) {
     a[(len/4) & 3] = 0x80 << (24 - (len & 3)*8);
@@ -146,9 +147,6 @@ struct CPUprep {
   }
 
   void markAllCtimeDone() {
-    long long atime_work = global_start_ctime - global_start_atime;
-    total_work_done += atime_work * ctimeCount;
-
     global_start_ctime += ctimeCount;
   }
 
@@ -189,10 +187,41 @@ struct CPUprep {
     return total_work_done;
   }
 
+  void saveWorkCountToPrev() {
+    prev_work_done = total_work_done;
+  }
+
+  long long getWorkSincePrev() const {
+    return total_work_done - prev_work_done;
+  }
+
+  int allocState(size_t maxWorkers) {
+    size_t bufsPerWorker = commit.header.size() + commit.toRawString().length();
+    bufsPerWorker = (bufsPerWorker + sizeof(B2SHAbuffer) - 1)
+                    / sizeof(B2SHAbuffer);
+    std::vector<B2SHAstate> onestate;
+    onestate.resize(1);
+    if (gpustate.createIO(q, onestate, maxWorkers)) {
+      fprintf(stderr, "gpuState.createIO failed: maxWorkers=%zu\n", maxWorkers);
+      return 1;
+    }
+    std::vector<B2SHAbuffer> onebuf;
+    onebuf.resize(1);
+    if (gpubuf.createIO(q, onebuf, maxWorkers * bufsPerWorker)) {
+      fprintf(stderr, "gpubuf.createInput failed (%zu)\n",
+              maxWorkers * bufsPerWorker);
+      return 1;
+    }
+    return 0;
+  }
+
   // buildGPUbuf creates gpubuf and populates it from commit.
   // state.size() should be set to the number of kernel executions to divide
   // the work into.
   int buildGPUbuf() {
+    saveWorkCountToPrev();
+    total_work_done += (global_start_ctime - global_start_atime) * ctimeCount;
+
     if (global_start_atime < commit.atime() ||
         global_start_ctime < commit.ctime()) {
       fprintf(stderr, "BUG: start_atime %lld < commit %lld\n",
@@ -278,35 +307,34 @@ struct CPUprep {
     }
 
     // Now create gpubuf and copy cpubuf to it.
-    if (gpubuf.getHandle()) {
-      // gpubuf already created.
-      if (q.writeBuffer(gpubuf.getHandle(), cpubuf)) {
-        fprintf(stderr, "writeBuffer(gpubuf) failed while resetting gpubuf\n");
-        return 1;
-      }
-    } else if (gpubuf.createIO(q, cpubuf)) {
-      fprintf(stderr, "gpubuf.createInput failed\n");
+    if (!gpubuf.getHandle()) {
+      fprintf(stderr, "BUG: must call allocState() before buildGPUbuf()\n");
+      return 1;
+    }
+    // gpubuf already created.
+    if (q.writeBuffer(gpubuf.getHandle(), cpubuf)) {
+      fprintf(stderr, "writeBuffer(gpubuf) failed while resetting gpubuf\n");
       return 1;
     }
 
     // Copy fixed and state to GPU.
+    if (!gpustate.getHandle()) {
+      fprintf(stderr, "BUG: must call allocState() before buildGPUbuf()\n");
+      return 1;
+    }
+    if (q.writeBuffer(gpustate.getHandle(), state)) {
+      fprintf(stderr, "writeBuffer(gpustate) failed\n");
+      return 1;
+    }
     if (gpufixed.getHandle()) {
-      if (!gpustate.getHandle()) {
-        fprintf(stderr, "BUG: gpufixed created, and not gpustate?\n");
-        return 1;
-      }
       // gpufixed and gpustate already created.
-      if (q.writeBuffer(gpustate.getHandle(), state)) {
-        fprintf(stderr, "writeBuffer(gpustate) failed\n");
-        return 1;
-      }
       if (q.writeBuffer(gpufixed.getHandle(), fixed)) {
         fprintf(stderr, "writeBuffer(gpufixed) failed\n");
         return 1;
       }
     } else {
-      if (gpufixed.createInput(q, fixed) || gpustate.createIO(q, state)) {
-        fprintf(stderr, "gpufixed or gpustate failed\n");
+      if (gpufixed.createInput(q, fixed)) {
+        fprintf(stderr, "gpufixed.createInput failed\n");
         return 1;
       }
       // Set program arguments.
@@ -320,15 +348,9 @@ struct CPUprep {
   }
 
   int start(std::vector<size_t> global_work_size) {
-    std::vector<size_t> local_work_size;
-    for (size_t i = 0; i < global_work_size.size() && i < 1; i++) {
-      size_t n = global_work_size.at(i);
-      static const size_t lf = 256;
-      local_work_size.emplace_back((n & (lf - 1)) != 0 ? 1 : lf);
-    }
+    size_t* local_size = NULL;  // OpenCL can auto-tune local_size.
     if (q.NDRangeKernel(prog, global_work_size.size(), NULL, 
-                        global_work_size.data(),
-                        local_work_size.data(), NULL)) {
+                        global_work_size.data(), local_size)) {
       fprintf(stderr, "NDRangeKernel failed\n");
       return 1;
     }
@@ -341,14 +363,56 @@ struct CPUprep {
 
   int wait() {
     completeEvent.waitForSignal();
+    if (wantValidTime) {
+      if (q.finish()) {
+        return 1;
+      }
+      timesValid = true;
+    } else {
+      timesValid = false;
+    }
     return 0;
   }
 
+  float submitTime() {
+    cl_ulong submitT, endT;
+    if (completeEvent.getSubmitTime(submitT)) {
+      fprintf(stderr, "submitTime: getSubmitTime failed\n");
+      return 0;
+    }
+    if (completeEvent.getEndTime(endT)) {
+      fprintf(stderr, "submitTime: getEndTime failed\n");
+      return 0;
+    }
+    return float(endT - submitT) * 1e-9;
+  }
+
+  float execTime() {
+    cl_ulong startT, endT;
+    if (completeEvent.getStartTime(startT)) {
+      fprintf(stderr, "submitTime: getStartTime failed\n");
+      return 0;
+    }
+    if (completeEvent.getEndTime(endT)) {
+      fprintf(stderr, "submitTime: getEndTime failed\n");
+      return 0;
+    }
+    return float(endT - startT) * 1e-9;
+  }
+
+  bool validTiming() const { return timesValid; }
+
+  float getWorkRate() {
+    return getWorkSincePrev() / submitTime();
+  }
+
  protected:
+  long long prev_work_done;
   long long total_work_done;
+  unsigned ctimeCount;
+  bool timesValid;
   long long global_start_atime;
   long long global_start_ctime;
-  unsigned ctimeCount;
 };
 
 // Test that the GPU kernel produces the same hash as the CPU.
@@ -361,6 +425,9 @@ static int testGPUsha1(OpenCLdev& dev, OpenCLprog& prog,
   }
   CPUprep prep(dev, prog, q, commit, commit.atime(), commit.ctime());
   prep.state.resize(1);
+  if (prep.allocState(1)) {
+    return 1;
+  }
   // Defaults for state.at(0) do not need to be modified.
   prep.testOnly = 1;
 
@@ -396,6 +463,22 @@ static int testGPUsha1(OpenCLdev& dev, OpenCLprog& prog,
   return 0;
 }
 
+// Use an idealized GPU where 1 worker can do 1024 iterations in 0.2 sec.
+// (That's a really slow GPU. The load will be tuned from there.)
+//
+// This function counteracts buildGPUbuf() by estimating how long the kernel
+// will run and only giving it about 0.2 sec of work. If numWorkers is bigger,
+// the amount of work per worker can be bigger while still fitting in 0.2 sec.
+static size_t getCtimeCountFor(size_t numWorkers, long long atime_work) {
+  if (!atime_work) {
+    fprintf(stderr, "getCtimeCountFor: atime_work=0 will divide by zero\n");
+    exit(1);
+  }
+  float eachWork = float(atime_work) / numWorkers;
+  long long r = (long long)(768.0f / eachWork);
+  return (r <= 0) ? 1 : (size_t) r;
+}
+
 int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
               long long atime_hint, long long ctime_hint) {
   if (testGPUsha1(dev, prog, commit)) {
@@ -423,9 +506,8 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     return 1;
   }
 
-  fprintf(stderr, "orig ctime=%lld\n", commit.ctime());
+  fprintf(stderr, "orig ctime=%lld  HINT: can use CU=24 WG=1024 as initial guess for numWorkers\n", commit.ctime());
   auto t0 = Clock::now();
-  auto t_loopTime = t0;
 
   size_t prep_max = 2;
   std::vector<CPUprep> prep;
@@ -450,10 +532,16 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
   size_t prep_i = 0;
 
   // Set context for the ping-ponging CPUprep instances.
-  static const size_t numWorkers = 32*1024;
+  size_t maxWorkers = 64*1024;
+  //size_t numWorkers = 32*1024;
+  size_t numWorkers = 1024;
+  size_t ctimeCount = getCtimeCountFor(numWorkers, ctime_hint - atime_hint);
   for (size_t i = 0; i < prep.size(); i++) {
-    prep.at(i).setCtimeCount(8);
+    prep.at(i).setCtimeCount(ctimeCount);
     prep.at(i).state.resize(numWorkers);
+    if (prep.at(i).allocState(maxWorkers)) {
+      return 1;
+    }
   }
 
   if (prep.at(prep_i).buildGPUbuf()) {
@@ -466,35 +554,55 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
   }
 
   long long last_work = 0;
+  bool startedWorkSizing = false;
   size_t good = 0;
   while (!good) {
-    // Report stats
+    // Auto-tune the workCount, etc.
+    // theP now has profiling info (unless this is the very first loop).
     auto& theP = prep.at(prep_i);
-    auto t1 = Clock::now();
-    std::chrono::duration<float> loopTime_duration = t1 - t_loopTime;
-    float loopTime = loopTime_duration.count();
-    t_loopTime = t1;
-
-    std::chrono::duration<float> sec_duration = t1 - t0;
-    float sec = sec_duration.count();
-
-    if (sec > 0.15f) {
-      t0 = t1;
-      long long total_work = 0;
-      for (size_t i = 0; i < prep.size(); i++) {
-        total_work += prep.at(i).getWorkCount();
+    auto& siblingP = prep.at((prep_i + 1) % prep_max);
+    if (theP.validTiming() && siblingP.validTiming()) {
+      float work = theP.getWorkRate();
+      float prev_work = siblingP.getWorkRate();
+      float f = 1.0f;
+      if (!startedWorkSizing) {
+        // Start walking up the capacity of the GPU with a larger batch.
+        f = 2.0f;
+      } else {
+        if (work > prev_work*1.05) {
+          // Try a larger batch, and see how the GPU responds.
+          f = 2.0f;
+        } else {
+          // This size did no good. Walk back one step and stop.
+          for (size_t i = 0; i < prep.size(); i++) {
+            prep.at(i).wantValidTime = 0;  // will set validTiming() false.
+          }
+          f = 0.5;
+        }
       }
-      float r = float(total_work - last_work)/sec * 1e-6;
-      last_work = total_work;
-      fprintf(stderr, "%.1fs %6.3fM/s ctime=%lld + %lld %.6fs/loop\n",
-              sec, r, theP.getCFirst(0),
-              theP.getCEnd(0) - theP.getCFirst(0), loopTime);
+      startedWorkSizing = true;
+
+      if (f != 1.0f) {
+        numWorkers = (size_t) (numWorkers * f);
+        ctimeCount = getCtimeCountFor(numWorkers, ctime_hint - atime_hint);
+        if (0 && startedWorkSizing) {
+          fprintf(stderr, "w=%9.0f p=%9.0f (%.3f) f=%.1f x%zu for %zu\n",
+                  work, prev_work, startedWorkSizing ? work/prev_work : 100,
+                  f, numWorkers, (prep_i + 1) % prep_max);
+        }
+      } else if (0) {
+        fprintf(stderr, "w=%9.0f p=%9.0f (%.3f) f=%.1f\n",
+                work, prev_work, work/prev_work, f);
+      }
     }
 
-    // Build the next batch of work.
-    auto& siblingP = prep.at((prep_i + 1) % prep_max);
+    // Update siblingP to do the work coming up after theP.
     siblingP.copyCountersFrom(theP);
     siblingP.markAllCtimeDone();
+
+    // Build the batch of work.
+    siblingP.setCtimeCount(ctimeCount);
+    siblingP.state.resize(numWorkers);
     if (siblingP.buildGPUbuf()) {
       fprintf(stderr, "siblingP.buildGPUbuf failed\n");
       return 1;
@@ -510,6 +618,27 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     if (theP.wait()) {
       fprintf(stderr, "theP.wait failed\n");
       return 1;
+    }
+
+    // Report stats
+    auto t1 = Clock::now();
+    std::chrono::duration<float> sec_duration = t1 - t0;
+    float sec = sec_duration.count();  // seconds elapsed, can be >1 loop
+
+    if (1 || sec > 1e-2) {
+      t0 = t1;
+      long long total_work = 0;
+      for (size_t i = 0; i < prep.size(); i++) {
+        total_work += prep.at(i).getWorkCount();
+      }
+      float r = float(total_work - last_work)/sec * 1e-6;
+      if (r > 500) {
+        r = 0;
+      }
+      last_work = total_work;
+      fprintf(stderr, "%.1fs %6.3fM/s ct=%lld + %2lld x%zu\n",
+              sec, r, theP.getCFirst(0), theP.getCEnd(0) - theP.getCFirst(0),
+              theP.state.size());
     }
 
     for (size_t i = 0; i < theP.state.size(); i++) {
