@@ -128,11 +128,7 @@ struct PrepWorkAllocator {
     if (atime_work) {
       mode = C_LOCKSTEP;
       eachWork = float(n * maxCU) * 32.0f / atime_work;
-      if (eachWork < 1.0f) {
-        ctimeCount = 1;
-      } else {
-        ctimeCount = (unsigned)(eachWork);
-      }
+      ctimeCount = (eachWork < 1.0f) ? 1 : (unsigned)eachWork;
     } else {
       mode = A_LOCKSTEP;
       atime_work = 1;
@@ -379,6 +375,7 @@ struct CPUprep {
       state.at(i).ctimeCount = govt.getCEnd(i) - govt.getCFirst(i);
       if (testOnly) {
         state.at(i).counts = 1;
+        state.at(i).ctimeCount = 1;
       }
 
       // buf contains the raw commit bytes.
@@ -545,7 +542,9 @@ static int testGPUsha1(OpenCLdev& dev, OpenCLprog& prog,
     return 1;
   }
   CPUprep prep(dev, prog, q, commit, commit.atime(), commit.ctime());
+  fprintf(stderr, "testGPUsha1: setNumWorkers(1)\n");
   prep.setNumWorkers(1);
+  fprintf(stderr, "testGPUsha1: setNumWorkers(1) DONE\n");
   if (prep.allocState(1)) {
     return 1;
   }
@@ -723,12 +722,12 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     std::chrono::duration<float> sec_duration = t1 - t0;
     float sec = sec_duration.count();  // seconds elapsed, can be >1 loop
 
+    long long total_work = 0;
+    for (size_t i = 0; i < prep.size(); i++) {
+      total_work += prep.at(i).getWorkCount();
+    }
     if (1 || sec > 1e-2) {
       t0 = t1;
-      long long total_work = 0;
-      for (size_t i = 0; i < prep.size(); i++) {
-        total_work += prep.at(i).getWorkCount();
-      }
       float r = float(total_work - last_work)/sec * 1e-6;
       if (r > 900) {  // Weird OpenCL bug, prev run waits for this run too.
         r = 0;
@@ -746,9 +745,9 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       // Reproduce the results on the CPU. Dump the results.
       CommitMessage noodle(commit);
       theP.updateNoodleWithResultAt(i, noodle);
-      fprintf(stderr, "%zu match=%u bytes  atime=%lld  ctime=%lld\n",
+      fprintf(stderr, "%zu match=%u b  atime=%lld  ctime=%lld  in %.0fMHash\n",
               i, theP.result.at(i).matchLen, noodle.atime(),
-              noodle.ctime());
+              noodle.ctime(), total_work * 1e-6);
 
       Sha1Hash shaout;
       Blake2Hash b2h;

@@ -19,7 +19,7 @@
  * this could be tweaked to add another field in B2SHAstate 'numBlocks' and
  * only do that many SHA1_Update passes, not adding the final padding / len.
  *
- * mod(bytesRemaining, 64) == mod(len, 64) must always be true, since a
+ * (bytesRemaining % 64) == (len % 64) must always be true, since a
  * B2SHAbuffer contains 64 bytes.
  */
 
@@ -72,8 +72,6 @@ unsigned int swap(unsigned int val) {
     return (rotate(((val) & 0x00FF00FF), 24U) |
             rotate(((val) & 0xFF00FF00), 8U));
 }
-
-#define mod(x, y) ((x) - ((x)/(y) * (y)))
 
 #define F2(x, y, z) ((x) ^ (y) ^ (z))
 #define F1(x, y, z) (bitselect(z, y, x))
@@ -449,7 +447,7 @@ static inline void blake2b_update(__constant B2SHAconst* fixed,
 static void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
   unsigned int srcIdx = i / 64;
   i &= (64 - 1);
-  unsigned int bits = 8*mod(i, sizeof(unsigned int));
+  unsigned int bits = 8*(i & (sizeof(unsigned int) - 1));
   i /= sizeof(unsigned int);
   for (;;) {
     unsigned int digit = src[srcIdx].buffer[i];
@@ -475,27 +473,27 @@ static void asciiIncrement(__global B2SHAbuffer* src, unsigned int i) {
 
 // S->shahash has not been run through swap() yet, so it is big-endian.
 static void compareB2SHA(__global B2SHAstate* state, blake2b_state* S) {
-  unsigned int bits;
-  for (bits = 0; bits < B2H_DIGEST_LEN*sizeof(unsigned long); bits++) {
-    unsigned long b2h = S->h[bits/sizeof(unsigned long)];
-    b2h >>= 8*mod(bits, sizeof(unsigned long));
-    if ((b2h & 0xff) == (S->shahash[0] >> 24)) {
-      unsigned int i;
-      for (i = 1; i < SHA_DIGEST_LEN*sizeof(unsigned int); i++) {
-        if (bits + i >= B2H_DIGEST_LEN*sizeof(unsigned long)) break;
+  unsigned int j;
+  for (j = 0; j < B2H_DIGEST_LEN*sizeof(unsigned long) - 4; j++) {
+    unsigned long b2h = S->h[j/sizeof(unsigned long)];
+    b2h >>= 8*(j & (sizeof(unsigned long) - 1));
+    if ((b2h & 0xff) != (S->shahash[0] >> 24)) {
+      continue;
+    }
+    unsigned int i;
+    for (i = 1; i < SHA_DIGEST_LEN*sizeof(unsigned int); i++) {
+      if (j + i >= B2H_DIGEST_LEN*sizeof(unsigned long)) break;
 
-        unsigned int sha = S->shahash[i/sizeof(unsigned int)];
-        sha >>= 24 - 8*mod(i, sizeof(unsigned int));
-        sha &= 0xff;
-        b2h = S->h[(bits+i)/sizeof(unsigned long)];
-        b2h = (b2h >> (8*mod(bits+i, sizeof(unsigned long)))) & 0xff;
-        if (b2h != sha) break;
-      }
-      if (i > state->matchLen) {
-        state->matchCount = state->counts;
-        state->matchLen = i;
-        state->matchCtimeCount = state->ctimeCount;
-      }
+      unsigned int sha = S->shahash[i/sizeof(unsigned int)];
+      sha >>= 24 - 8*(i & (sizeof(unsigned int) - 1));
+      unsigned long b2h = S->h[(j + i)/sizeof(unsigned long)];
+      b2h = (b2h >> (8*((j + i) & (sizeof(unsigned long) - 1))));
+      if ((b2h & 0xff) != (sha & 0xff)) break;
+    }
+    if (i > state->matchLen) {
+      state->matchCount = state->counts;
+      state->matchLen = i;
+      state->matchCtimeCount = state->ctimeCount;
     }
   }
 }
@@ -559,10 +557,4 @@ __kernel void main(__constant B2SHAconst* fixed,
   for (unsigned int i = 0; i < SHA_DIGEST_LEN; i++) {
     state->hash[i] = swap(S.shahash[i]);
   }
-  // Things that might speed it up:
-  // 1. OpenCL best practices:
-  //    * can tune the register usage with
-  // http://developer.download.nvidia.com/compute/cuda/3_2_prod/toolkit/docs/OpenCL_Extensions/cl_nv_compiler_options.txt
-  //    * can tune threads per block. 64 is min, 128 or 256 is good
-  //    * have the program auto-benchmark different local work sizes
 }

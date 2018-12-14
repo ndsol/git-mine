@@ -10,6 +10,9 @@
 
 /**
  * Hash difficulty stats:
+ * - Summary: 4 bytes ~        300 MH
+ *            5 bytes ~     76,800 MH
+ *            6 bytes ~ 19,660,800 MH
  * volcano cb9a1bcf9b92820d42b0a2e2a1c4f4d852e1dc87
  *  3 byte match 4539e6     0.0353 * 50.119K =   1.7962 MHash
  *  4 byte match ? (bug)    7.44   * 50.119K = 372.89 MHash
@@ -42,9 +45,12 @@
  *  4 byte match 1dcf3e20   9.77 * 1.80M =    17.586 MHash
  *     atime:1539471984
  *     ctime:1541188269
- *  5 byte match 61a46cc192 21860 * 1.8M = 39348     MHash
+ *  5 byte match 61a46cc192 21860 * 1.8M = 40784     MHash
  *     atime:1540342039
  *     ctime:1541210550
+ *
+ * git-mine 56ec509b2401d2bdea4627c44f51d0ce026ebcd6
+ *  5 byte match 73f02fd029                61727     MHash
  */
 
 class MineBoss {
