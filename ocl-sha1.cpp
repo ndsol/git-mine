@@ -94,8 +94,9 @@ struct B2SHAstate {
 };
 
 struct PrepWorkAllocator {
-  PrepWorkAllocator(long long start_atime, long long start_ctime)
-      : ctimeCount(1)
+  PrepWorkAllocator(cl_uint maxCU, long long start_atime,
+                    long long start_ctime)
+      : mode(UNDEFINED), fNumWorkers(0), ctimeCount(1), maxCU(maxCU)
       , global_start_atime(start_atime), global_start_ctime(start_ctime) {}
 
   void copyCountersFrom(PrepWorkAllocator& other) {
@@ -115,51 +116,117 @@ struct PrepWorkAllocator {
   // amount of work per worker can be bigger while still fitting in 0.2 sec
   int setNumWorkers(size_t n) {
     fNumWorkers = n;
-    long long atime_work = global_start_ctime - global_start_atime;
-    if (!atime_work) {
-      fprintf(stderr, "setNumWorkers: atime_work=0 will divide by zero\n");
+    atime_work = global_start_ctime - global_start_atime;
+    if (atime_work < 0) {
+      fprintf(stderr, "setNumWorkers: atime_work=%lld BUG, ctime < atime\n",
+              atime_work);
+      atime_work = 0;
       return 1;
     }
-    float eachWork = float(atime_work) / n;
-    if (eachWork < 0.0f || eachWork > 768.0f) {
-      ctimeCount = 1;
+
+    float eachWork = 0.0f;
+    if (atime_work) {
+      mode = C_LOCKSTEP;
+      eachWork = float(n * maxCU) * 32.0f / atime_work;
+      if (eachWork < 1.0f) {
+        ctimeCount = 1;
+      } else {
+        ctimeCount = (unsigned)(eachWork);
+      }
     } else {
-      ctimeCount = (unsigned)(768.0f / eachWork);
+      mode = A_LOCKSTEP;
+      atime_work = 1;
+      fprintf(stderr, "engage A_LOCKSTEP\n");
+      // Take a large number of ctime to work on.
+      ctimeCount = 1024;
     }
     return 0;
   }
 
   // getAFirst returns the first atime that should be processed by worker_i.
   long long getAFirst(size_t worker_i) const {
-    long long atime_work = global_start_ctime - global_start_atime;
-    return global_start_atime + (long long)(
-           (float(worker_i) * atime_work) / fNumWorkers);
+    switch (mode) {
+      case C_LOCKSTEP:
+        return global_start_atime + (long long)(
+              (float(worker_i) * atime_work) / fNumWorkers);
+      case A_LOCKSTEP:
+        return global_start_atime;
+      default:
+        fprintf(stderr, "getAFirst(%zu): mode UNDEFINED\n", worker_i);
+        exit(1);
+    }
+    return 0;
   }
 
   // getAEnd returns the atime after the last atime that should be processed.
   long long getAEnd(size_t worker_i) const {
-    long long atime_work = global_start_ctime - global_start_atime;
-    return global_start_atime + (long long)(
-           (float(worker_i + 1) * atime_work) / fNumWorkers);
+    switch (mode) {
+      case C_LOCKSTEP:
+        return global_start_atime + (long long)(
+              float(worker_i + 1) * atime_work / fNumWorkers);
+      case A_LOCKSTEP:
+      {
+        // atime_work will be the minimum work allowed.
+        // Workers with a higher getCFirst() will have more atime work too.
+        // FIXME: Some kernels will run longer than others.
+        long long aend = global_start_atime + atime_work - 1;
+        long long cend = getCFirst(worker_i);
+        if (cend > aend) {
+          aend = cend;
+        }
+        return aend + 1;
+      }
+      default:
+        fprintf(stderr, "getAEnd(%zu): mode UNDEFINED\n", worker_i);
+        exit(1);
+    }
+    return 0;
   }
 
   // getCFirst returns the first ctime that should be processed by worker_i.
   long long getCFirst(size_t worker_i) const {
-    (void)worker_i;
-    return global_start_ctime;
+    switch (mode) {
+      case C_LOCKSTEP:
+        return global_start_ctime;
+      case A_LOCKSTEP:
+        return global_start_ctime + (long long)(
+            float(worker_i) * ctimeCount / fNumWorkers);
+      default:
+        fprintf(stderr, "getCFirst(%zu): mode UNDEFINED\n", worker_i);
+        exit(1);
+    }
+    return 0;
   }
 
   long long getCEnd(size_t worker_i) const {
-    (void)worker_i;
-    return global_start_ctime + ctimeCount;
+    switch (mode) {
+      case C_LOCKSTEP:
+        return global_start_ctime + ctimeCount;
+      case A_LOCKSTEP:
+        return global_start_ctime + (long long)(
+            float(worker_i + 1) * ctimeCount / fNumWorkers);
+      default:
+        fprintf(stderr, "getCEnd(%zu): mode UNDEFINED\n", worker_i);
+        exit(1);
+    }
+    return 0;
   }
 
   long long workCount() const {
     return (global_start_ctime - global_start_atime) * ctimeCount;
   }
 
+  enum WorkModes {
+    UNDEFINED,
+    C_LOCKSTEP,
+    A_LOCKSTEP,
+  };
+
+  WorkModes mode;
   float fNumWorkers;
   unsigned ctimeCount;
+  cl_uint maxCU;
+  long long atime_work;
   long long global_start_atime;
   long long global_start_ctime;
 };
@@ -185,7 +252,7 @@ struct CPUprep {
       : dev(dev), prog(prog), q(q), commit(commit), gpufixed(dev)
       , gpustate(dev), gpubuf(dev), fixed(1), testOnly(0), wantValidTime(1)
       , prev_work_done(0), total_work_done(0), timesValid(false)
-      , govt(start_atime, start_ctime) {}
+      , govt(dev.info.maxCU, start_atime, start_ctime) {}
 
   OpenCLdev& dev;
   OpenCLprog& prog;
