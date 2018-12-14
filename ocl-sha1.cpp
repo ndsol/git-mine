@@ -150,8 +150,27 @@ struct CPUprep {
     global_start_ctime += ctimeCount;
   }
 
-  void setCtimeCount(unsigned c) {
-    ctimeCount = c;
+  // Use an idealized GPU where 1 worker can do 1024 iterations in 0.2 sec.
+  // (That's a really slow GPU. The load will be tuned from there.)
+  //
+  // This function counteracts buildGPUbuf() by estimating how long the kernel
+  // will run and only giving it about 0.2 sec of work. If n is bigger the
+  // amount of work per worker can be bigger while still fitting in 0.2 sec
+  int setNumWorkers(size_t n) {
+    state.resize(n);
+
+    long long atime_work = global_start_ctime - global_start_atime;
+    if (!atime_work) {
+      fprintf(stderr, "setNumWorkers: atime_work=0 will divide by zero\n");
+      return 1;
+    }
+    float eachWork = float(atime_work) / n;
+    if (eachWork < 0.0f || eachWork > 768.0f) {
+      ctimeCount = 1;
+    } else {
+      ctimeCount = (unsigned)(768.0f / eachWork);
+    }
+    return 0;
   }
 
   // getAFirst returns the first atime that should be processed by worker_i.
@@ -424,7 +443,7 @@ static int testGPUsha1(OpenCLdev& dev, OpenCLprog& prog,
     return 1;
   }
   CPUprep prep(dev, prog, q, commit, commit.atime(), commit.ctime());
-  prep.state.resize(1);
+  prep.setNumWorkers(1);
   if (prep.allocState(1)) {
     return 1;
   }
@@ -463,22 +482,6 @@ static int testGPUsha1(OpenCLdev& dev, OpenCLprog& prog,
   return 0;
 }
 
-// Use an idealized GPU where 1 worker can do 1024 iterations in 0.2 sec.
-// (That's a really slow GPU. The load will be tuned from there.)
-//
-// This function counteracts buildGPUbuf() by estimating how long the kernel
-// will run and only giving it about 0.2 sec of work. If numWorkers is bigger,
-// the amount of work per worker can be bigger while still fitting in 0.2 sec.
-static size_t getCtimeCountFor(size_t numWorkers, long long atime_work) {
-  if (!atime_work) {
-    fprintf(stderr, "getCtimeCountFor: atime_work=0 will divide by zero\n");
-    exit(1);
-  }
-  float eachWork = float(atime_work) / numWorkers;
-  long long r = (long long)(768.0f / eachWork);
-  return (r <= 0) ? 1 : (size_t) r;
-}
-
 int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
               long long atime_hint, long long ctime_hint) {
   if (testGPUsha1(dev, prog, commit)) {
@@ -510,11 +513,15 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
   auto t0 = Clock::now();
 
   size_t prep_max = 2;
+  size_t prep_i = 0;
   std::vector<CPUprep> prep;
   prep.reserve(prep_max);
   std::vector<OpenCLprog> progCopies;
   progCopies.reserve(prep_max - 1);
 
+  // Set context for the ping-ponging CPUprep instances.
+  size_t numWorkers = dev.info.maxCU*dev.info.maxWG/2;
+  size_t maxWorkers = dev.info.maxCU*dev.info.maxWG*4;
   for (size_t i = 0; i < prep_max; i++) {
     OpenCLprog* chosenProg = NULL;
     if (i == 0) {
@@ -528,17 +535,8 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       chosenProg = &progCopies.back();
     }
     prep.emplace_back(dev, *chosenProg, q, commit, atime_hint, ctime_hint);
-  }
-  size_t prep_i = 0;
-
-  // Set context for the ping-ponging CPUprep instances.
-  size_t numWorkers = dev.info.maxCU*dev.info.maxWG/2;
-  size_t maxWorkers = dev.info.maxCU*dev.info.maxWG*4;
-  size_t ctimeCount = getCtimeCountFor(numWorkers, ctime_hint - atime_hint);
-  for (size_t i = 0; i < prep.size(); i++) {
-    prep.at(i).setCtimeCount(ctimeCount);
-    prep.at(i).state.resize(numWorkers);
-    if (prep.at(i).allocState(maxWorkers)) {
+    if (prep.back().setNumWorkers(numWorkers) ||
+        prep.back().allocState(maxWorkers)) {
       return 1;
     }
   }
@@ -581,7 +579,6 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
 
       if (f != 1.0f) {
         numWorkers = (size_t) (numWorkers * f);
-        ctimeCount = getCtimeCountFor(numWorkers, ctime_hint - atime_hint);
         if (0 && startedWorkSizing) {
           fprintf(stderr, "w=%9.0f p=%9.0f (%.3f) f=%.1f x%zu for %zu\n",
                   work, prev_work, startedWorkSizing ? work/prev_work : 100,
@@ -598,8 +595,10 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
     siblingP.markAllCtimeDone();
 
     // Build the batch of work.
-    siblingP.setCtimeCount(ctimeCount);
-    siblingP.state.resize(numWorkers);
+    if (siblingP.setNumWorkers(numWorkers)) {
+      fprintf(stderr, "siblingP.setNumWorkers(%zu) failed\n", numWorkers);
+      return 1;
+    }
     if (siblingP.buildGPUbuf()) {
       fprintf(stderr, "siblingP.buildGPUbuf failed\n");
       return 1;
