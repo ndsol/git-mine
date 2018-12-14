@@ -93,6 +93,77 @@ struct B2SHAstate {
   uint32_t ctimeCount;
 };
 
+struct PrepWorkAllocator {
+  PrepWorkAllocator(long long start_atime, long long start_ctime)
+      : ctimeCount(1)
+      , global_start_atime(start_atime), global_start_ctime(start_ctime) {}
+
+  void copyCountersFrom(PrepWorkAllocator& other) {
+    global_start_atime = other.global_start_atime;
+    global_start_ctime = other.global_start_ctime;
+  }
+
+  void markAllCtimeDone() {
+    global_start_ctime += ctimeCount;
+  }
+
+  // Use an idealized GPU where 1 worker can do 1024 iterations in 0.2 sec.
+  // (That's a really slow GPU. The load will be tuned from there.)
+  //
+  // This function counteracts buildGPUbuf() by estimating how long the kernel
+  // will run and only giving it about 0.2 sec of work. If n is bigger the
+  // amount of work per worker can be bigger while still fitting in 0.2 sec
+  int setNumWorkers(size_t n) {
+    fNumWorkers = n;
+    long long atime_work = global_start_ctime - global_start_atime;
+    if (!atime_work) {
+      fprintf(stderr, "setNumWorkers: atime_work=0 will divide by zero\n");
+      return 1;
+    }
+    float eachWork = float(atime_work) / n;
+    if (eachWork < 0.0f || eachWork > 768.0f) {
+      ctimeCount = 1;
+    } else {
+      ctimeCount = (unsigned)(768.0f / eachWork);
+    }
+    return 0;
+  }
+
+  // getAFirst returns the first atime that should be processed by worker_i.
+  long long getAFirst(size_t worker_i) const {
+    long long atime_work = global_start_ctime - global_start_atime;
+    return global_start_atime + (long long)(
+           (float(worker_i) * atime_work) / fNumWorkers);
+  }
+
+  // getAEnd returns the atime after the last atime that should be processed.
+  long long getAEnd(size_t worker_i) const {
+    long long atime_work = global_start_ctime - global_start_atime;
+    return global_start_atime + (long long)(
+           (float(worker_i + 1) * atime_work) / fNumWorkers);
+  }
+
+  // getCFirst returns the first ctime that should be processed by worker_i.
+  long long getCFirst(size_t worker_i) const {
+    (void)worker_i;
+    return global_start_ctime;
+  }
+
+  long long getCEnd(size_t worker_i) const {
+    (void)worker_i;
+    return global_start_ctime + ctimeCount;
+  }
+
+  long long workCount() const {
+    return (global_start_ctime - global_start_atime) * ctimeCount;
+  }
+
+  float fNumWorkers;
+  unsigned ctimeCount;
+  long long global_start_atime;
+  long long global_start_ctime;
+};
+
 // CPUprep prepares the work for sha1.cl, and holds its output.
 // This wraps the memory buffers and basic setup making the algorithm shorter
 // to write.
@@ -113,8 +184,8 @@ struct CPUprep {
           long long start_ctime)
       : dev(dev), prog(prog), q(q), commit(commit), gpufixed(dev)
       , gpustate(dev), gpubuf(dev), fixed(1), testOnly(0), wantValidTime(1)
-      , prev_work_done(0), total_work_done(0), ctimeCount(1), timesValid(false)
-      , global_start_atime(start_atime), global_start_ctime(start_ctime) {}
+      , prev_work_done(0), total_work_done(0), timesValid(false)
+      , govt(start_atime, start_ctime) {}
 
   OpenCLdev& dev;
   OpenCLprog& prog;
@@ -142,64 +213,30 @@ struct CPUprep {
   }
 
   void copyCountersFrom(CPUprep& other) {
-    global_start_atime = other.global_start_atime;
-    global_start_ctime = other.global_start_ctime;
+    govt.copyCountersFrom(other.govt);
   }
 
   void markAllCtimeDone() {
-    global_start_ctime += ctimeCount;
+    govt.markAllCtimeDone();
   }
 
-  // Use an idealized GPU where 1 worker can do 1024 iterations in 0.2 sec.
-  // (That's a really slow GPU. The load will be tuned from there.)
-  //
-  // This function counteracts buildGPUbuf() by estimating how long the kernel
-  // will run and only giving it about 0.2 sec of work. If n is bigger the
-  // amount of work per worker can be bigger while still fitting in 0.2 sec
+  // setNumWorkers sets the control parameters to assign work to each worker.
   int setNumWorkers(size_t n) {
     state.resize(n);
-
-    long long atime_work = global_start_ctime - global_start_atime;
-    if (!atime_work) {
-      fprintf(stderr, "setNumWorkers: atime_work=0 will divide by zero\n");
-      return 1;
-    }
-    float eachWork = float(atime_work) / n;
-    if (eachWork < 0.0f || eachWork > 768.0f) {
-      ctimeCount = 1;
-    } else {
-      ctimeCount = (unsigned)(768.0f / eachWork);
-    }
-    return 0;
+    return govt.setNumWorkers(n);
   }
 
-  // getAFirst returns the first atime that should be processed by worker_i.
-  long long getAFirst(size_t worker_i) const {
-    long long atime_work = global_start_ctime - global_start_atime;
-    float fNumWorkers = state.size();
-
-    return global_start_atime + (long long)(
-           (float(worker_i) * atime_work) / fNumWorkers);
+  void updateNoodleWithResultAt(size_t i, CommitMessage& noodle) {
+    noodle.set_atime(govt.getAEnd(i) - result.at(i).matchCount);
+    noodle.set_ctime(govt.getCEnd(0) - result.at(i).matchCtimeCount);
   }
 
-  // getAEnd returns the atime after the last atime that should be processed.
-  long long getAEnd(size_t worker_i) const {
-    long long atime_work = global_start_ctime - global_start_atime;
-    float fNumWorkers = state.size();
-
-    return global_start_atime + (long long)(
-           (float(worker_i + 1) * atime_work) / fNumWorkers);
+  long long getC() const {
+    return govt.getCFirst(0);
   }
 
-  // getCFirst returns the first ctime that should be processed by worker_i.
-  long long getCFirst(size_t worker_i) const {
-    (void)worker_i;
-    return global_start_ctime;
-  }
-
-  long long getCEnd(size_t worker_i) const {
-    (void)worker_i;
-    return global_start_ctime + ctimeCount;
+  long long getCCount() const {
+    return govt.getCEnd(0) - govt.getCFirst(0);
   }
 
   long long getWorkCount() const {
@@ -239,14 +276,14 @@ struct CPUprep {
   // the work into.
   int buildGPUbuf() {
     saveWorkCountToPrev();
-    total_work_done += (global_start_ctime - global_start_atime) * ctimeCount;
+    total_work_done += govt.workCount();
 
-    if (global_start_atime < commit.atime() ||
-        global_start_ctime < commit.ctime()) {
+    if (govt.global_start_atime < commit.atime() ||
+        govt.global_start_ctime < commit.ctime()) {
       fprintf(stderr, "BUG: start_atime %lld < commit %lld\n",
-              global_start_atime, commit.atime());
+              govt.global_start_atime, commit.atime());
       fprintf(stderr, "     start_ctime %lld < commit %lld\n",
-              global_start_ctime, commit.ctime());
+              govt.global_start_ctime, commit.ctime());
       return 1;
     }
     if (fixed.size() != 1) {
@@ -261,8 +298,8 @@ struct CPUprep {
       if (0 && !gpubuf.getHandle() && (i & 8191) == 8191) {
         fprintf(stderr, "cpu: create %6zu/%zu threads\n", i, state.size());
       }
-      noodle.set_atime(getAFirst(i));
-      noodle.set_ctime(getCFirst(i));
+      noodle.set_atime(govt.getAFirst(i));
+      noodle.set_ctime(govt.getCFirst(i));
 
       // counterPos points to the last digit in author.
       state.at(i).counterPos = noodle.header.size() + noodle.parent.size() +
@@ -271,8 +308,8 @@ struct CPUprep {
       state.at(i).ctimePos = state.at(i).counterPos + noodle.author_tz.size() +
                              noodle.committer.size() +
                              noodle.committer_time.size();
-      state.at(i).counts = (uint32_t) (getAEnd(i) - getAFirst(i));
-      state.at(i).ctimeCount = ctimeCount;
+      state.at(i).counts = (uint32_t) (govt.getAEnd(i) - govt.getAFirst(i));
+      state.at(i).ctimeCount = govt.getCEnd(i) - govt.getCFirst(i);
       if (testOnly) {
         state.at(i).counts = 1;
       }
@@ -428,10 +465,8 @@ struct CPUprep {
  protected:
   long long prev_work_done;
   long long total_work_done;
-  unsigned ctimeCount;
   bool timesValid;
-  long long global_start_atime;
-  long long global_start_ctime;
+  PrepWorkAllocator govt;
 };
 
 // Test that the GPU kernel produces the same hash as the CPU.
@@ -628,25 +663,22 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
         total_work += prep.at(i).getWorkCount();
       }
       float r = float(total_work - last_work)/sec * 1e-6;
-      if (r > 900) {
+      if (r > 900) {  // Weird OpenCL bug, prev run waits for this run too.
         r = 0;
       }
       last_work = total_work;
       fprintf(stderr, "%.1fs %6.3fM/s ct=%lld + %2lld x%zu\n",
-              sec, r, theP.getCFirst(0), theP.getCEnd(0) - theP.getCFirst(0),
-              theP.state.size());
+              sec, r, theP.getC(), theP.getCCount(), theP.state.size());
     }
 
     for (size_t i = 0; i < theP.state.size(); i++) {
       if (theP.result.at(i).matchLen == MIN_MATCH_LEN) {
         continue;
       }
-      uint64_t matchCount = theP.result.at(i).matchCount;
 
       // Reproduce the results on the CPU. Dump the results.
       CommitMessage noodle(commit);
-      noodle.set_atime(theP.getAEnd(i) - matchCount);
-      noodle.set_ctime(theP.getCEnd(0) - theP.result.at(i).matchCtimeCount);
+      theP.updateNoodleWithResultAt(i, noodle);
       fprintf(stderr, "%zu match=%u bytes  atime=%lld  ctime=%lld\n",
               i, theP.result.at(i).matchLen, noodle.atime(),
               noodle.ctime());
