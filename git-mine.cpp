@@ -59,6 +59,11 @@
  * subninja 75fc7c9e3e1d2ddee99729adb3fda737960db04e
  *  6 byte match 33056ea186f6         15,714,598     MHash
  *    atime=1550405995  ctime=1551400964
+ *
+ * subgn 5c926359eaf7850f48e8fa50a7868161e45c98f3
+ *  6 byte match acb69231dc31          1,606,276 (plus ~20% more)
+ *  (Not all hashing was done in the first run)
+ *    atime=1536024389  ctime=1546625046
  */
 
 class MineBoss {

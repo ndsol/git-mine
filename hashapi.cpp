@@ -132,17 +132,19 @@ int doGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
   com_date = com_date.substr(0, pos + 1);
 
   std::string parent = noodle.parent;
-  if (parent.substr(0, 7) != "parent ") {
-    fprintf(stderr, "Failed to parse parent: %s\n", parent.c_str());
-    return 1;
+  if (!parent.empty()) {
+    if (parent.substr(0, 7) != "parent ") {
+      fprintf(stderr, "Failed to parse parent: %s\n", parent.c_str());
+      return 1;
+    }
+    parent = parent.substr(7);
+    pos = parent.find_last_not_of("\r\n ");
+    if (pos == std::string::npos) {
+      fprintf(stderr, "Failed to trim parent: %s\n", parent.c_str());
+      return 1;
+    }
+    parent = parent.substr(0, pos + 1);
   }
-  parent = parent.substr(7);
-  pos = parent.find_last_not_of("\r\n ");
-  if (pos == std::string::npos) {
-    fprintf(stderr, "Failed to trim parent: %s\n", parent.c_str());
-    return 1;
-  }
-  parent = parent.substr(0, pos + 1);
 
   std::string tree;
   for (pos = 0; pos < noodle.header.size(); pos++) {
@@ -218,9 +220,15 @@ int doGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
   signal(SIGPIPE, handle_SIGPIPE);
   char* git_argv[] = {
     (char*)"git", (char*)"commit-tree", (char*)tree.c_str(),
-    (char*)"-p", (char*)parent.c_str(),
     NULL,  // Terminate git_argv with a NULL.
+    NULL,
+    NULL,
   };
+  if (!parent.empty()) {
+    git_argv[3] = (char*)"-p";
+    git_argv[4] = (char*)parent.c_str();
+  }
+
   int pid = fork();
   if (pid < 0) {
     fprintf(stderr, "fork(git commit-tree) failed: %d %s\n", errno,
