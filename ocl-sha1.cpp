@@ -15,7 +15,7 @@ namespace gitmine {
 
 typedef std::chrono::steady_clock Clock;
 
-#define MIN_MATCH_LEN (4)
+#define MIN_MATCH_LEN (5)
 
 static const uint32_t sha1_IV[] = {
   0x67452301,
@@ -752,32 +752,9 @@ int findOnGPU(OpenCLdev& dev, OpenCLprog& prog, const CommitMessage& commit,
       Sha1Hash shaout;
       Blake2Hash b2h;
       noodle.hash(shaout, b2h);
-      char shabuf[1024];
-      if (shaout.dump(shabuf, sizeof(shabuf))) {
-        fprintf(stderr, "shaout.dump failed in findOnGPU\n");
-        return 1;
-      }
-      fprintf(stderr, "%zu sha1: \e[1;31m%.*s\e[0m%s\n", i,
-              theP.result.at(i).matchLen * 2, shabuf,
-              &shabuf[theP.result.at(i).matchLen * 2]);
-      char b2hbuf[1024];
-      if (b2h.dump(b2hbuf, sizeof(b2hbuf))) {
-        fprintf(stderr, "b2h.dump failed in findOnGPU\n");
-        return 1;
-      }
-      shabuf[theP.result.at(i).matchLen * 2] = 0;
-      char* b2hpos = strstr(b2hbuf, shabuf);
-      if (b2hpos) {
+      if (0 == printGitCommit(i, shaout, b2h, noodle)) {
         good++;
       }
-      int b2hlen = b2hpos ? (b2hpos - b2hbuf) : strlen(b2hbuf);
-      int b2hMatchLen = theP.result.at(i).matchLen * 2;
-      if (b2hlen + b2hMatchLen > (int)strlen(b2hbuf)) {
-        b2hMatchLen = strlen(b2hbuf) - b2hlen;
-      }
-      fprintf(stderr, "%zu blake2: %.*s\e[1;31m%.*s\e[0m%s\n", i, b2hlen,
-              b2hbuf, b2hMatchLen, &b2hbuf[b2hlen],
-              &b2hbuf[b2hlen + b2hMatchLen]);
     }
 
     prep_i = (prep_i + 1) % prep_max;

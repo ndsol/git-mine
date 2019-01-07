@@ -31,11 +31,10 @@ static void handle_SIGPIPE(int) {
   fprintf(stderr, "received SIGPIPE\n");
 }
 
-int doGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
-                CommitMessage& noodle) {
+int printGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
+                   CommitMessage& noodle) {
   fprintf(stderr, "Th%zu author time = %lld\n", thId, noodle.atime());
   fprintf(stderr, "Th%zu committer   = %lld\n", thId, noodle.ctime());
-  fprintf(stderr, "Th%zu sha1: ", thId);
   char buf[1024];
   if (sha.dump(buf, sizeof(buf))) {
     fprintf(stderr, "sha.dump failed\n");
@@ -45,25 +44,39 @@ int doGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
   size_t matchlen = 0;
   int match = b2h.instr(sha.result, sizeof(sha.result), &matchlen);
   if (match == -1) {
-    fprintf(stderr, "unable to match sha1-b2h.\n");
+    fprintf(stderr, "unable to match sha1-b2h:\n");
+    fprintf(stderr, "Th%zu sha1: %s\n", thId, buf);
+    if (b2h.dump(buf, sizeof(buf))) {
+      fprintf(stderr, "b2h.dump failed\n");
+      return 1;
+    }
+    fprintf(stderr, "Th%zu blake2: %s\n", thId, buf);
     return 1;
   }
-  unsigned part = matchlen*2 + 2;
-  if (part > strlen(buf)) part = strlen(buf);
-  fprintf(stderr, "%.*s%s\n", part, buf, (part != strlen(buf)) ? "..." : "");
-  fprintf(stderr, "Th%zu blake2: ", thId);
+  match *= 2;
+  matchlen *= 2;
+  if (matchlen > wantOutput.size()) {
+    fprintf(stderr, "b2h.instr: matchlen=%zu must not be > %zu\n",
+            matchlen, wantOutput.size());
+    return 1;
+  }
+  fprintf(stderr, "Th%zu sha1: \e[1;31m%.*s\e[0m%s\n", thId, (int)matchlen,
+          buf, &buf[matchlen]);
+
   if (b2h.dump(buf, sizeof(buf))) {
     fprintf(stderr, "b2h.dump failed\n");
     return 1;
   }
-  if (match != 0) {
-    fprintf(stderr, "%.*s ", match*2, buf);
+  fprintf(stderr, "Th%zu blake2: %.*s\e[1;31m%.*s\e[0m%s\n", thId, match,
+          buf, (int)matchlen, &buf[match], &buf[match + matchlen]);
+  return 0;
+}
+
+int doGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
+                CommitMessage& noodle) {
+  if (printGitCommit(thId, sha, b2h, noodle)) {
+    return 1;
   }
-  fprintf(stderr, "%.*s", int(matchlen*2), &buf[match*2]);
-  if ((match + matchlen)*2 < strlen(buf)) {
-    fprintf(stderr, " %s", &buf[(match + matchlen)*2]);
-  }
-  fprintf(stderr, "\n");
 
   // Create environment for subprocess.
   std::string author = noodle.author;
@@ -327,13 +340,18 @@ int doGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
     return 1;
   }
   // wantOutput has the hexdump of sha1 from the top of the function.
-  wantOutput += "\n";
-  if (code || output != wantOutput) {
+  char buf[1024];
+  if (sha.dump(buf, sizeof(buf))) {
+    fprintf(stderr, "sha.dump failed\n");
+    return 1;
+  }
+  snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\n");
+  if (code || output != buf) {
     fprintf(stderr, "git commit-tree exited with code %d:\n", code);
     fprintf(stderr, "%s", output.c_str());
     return 1;
   }
   fprintf(stderr, "repo updated.\n# hint: %s %s",
-          "git checkout master; git reset --hard", wantOutput.c_str());
+          "git checkout master; git reset --hard", buf);
   return 0;
 }

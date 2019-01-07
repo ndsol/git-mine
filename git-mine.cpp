@@ -51,6 +51,14 @@
  *
  * git-mine 56ec509b2401d2bdea4627c44f51d0ce026ebcd6
  *  5 byte match 73f02fd029                61727     MHash
+ *
+ * git-mine 94c19337b5027a9a74b0db4bc7bcd84a72b2afe4
+ *  5 byte match f443ef67dd                15917     MHash
+ *     atime=1544904115  ctime=1545005705
+ *
+ * subninja 75fc7c9e3e1d2ddee99729adb3fda737960db04e
+ *  6 byte match 33056ea186f6         15,714,598     MHash
+ *    atime=1550405995  ctime=1551400964
  */
 
 class MineBoss {
@@ -334,7 +342,7 @@ private:
 
         // Increment ctime and try again.
         commit_delta++;
-        noodle.set_time(noodle.ctime() + 1);
+        noodle.set_ctime(noodle.ctime() + 1);
       }
     }
   };
@@ -395,25 +403,6 @@ int main(int argc, char ** argv) {
       return 1;
     }
     fprintf(stderr, "Signing commit: %s\n", shabuf);
-    static const char* wantsha = "68d1800069d0d0f098d151560a5c62049113da1f";
-    if (strcmp(shabuf, wantsha)) {
-      fprintf(stderr, "sha1 want: %s\n", wantsha);
-      fprintf(stderr, "BUG BUG BUG!\n");
-      return 1;
-    }
-#if 0
-    char buf[1024];
-    if (b2h.dump(buf, sizeof(buf))) {
-      return 1;
-    }
-    fprintf(stderr, "blake2: %s\n", buf);
-    const char* wantBlake2 = "foo";
-    if (strcmp(buf, wantBlake2)) {
-      fprintf(stderr, "blake2 want %s\n", wantBlake2);
-      fprintf(stderr, "BUG BUG BUG!\n");
-      return 1;
-    }
-#endif
   }
 
   boss.start();

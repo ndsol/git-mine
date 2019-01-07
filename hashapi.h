@@ -365,5 +365,7 @@ private:
   const char* const whoami;
 };
 
+int printGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
+                   CommitMessage& noodle);
 int doGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
                 CommitMessage& noodle);
