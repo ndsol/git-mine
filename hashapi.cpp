@@ -192,7 +192,7 @@ int doGitCommit(size_t thId, Sha1Hash& sha, Blake2Hash& b2h,
 
   if (0) {
     fprintf(stderr, "tree \"%s\"\n", tree.c_str());
-    fprintf(stderr, "parent \"%s\"\n", parent.c_str());
+    if (!parent.empty()) fprintf(stderr, "parent \"%s\"\n", parent.c_str());
     fprintf(stderr, "\"%s\" \"%s\" \"%s\"\n",
             author.c_str(), author_email.c_str(), author_date.c_str());
     fprintf(stderr, "\"%s\" \"%s\" \"%s\"\n",

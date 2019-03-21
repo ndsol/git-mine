@@ -234,27 +234,7 @@ int main(int argc, char ** argv) {
     if (b2h.dump(buf, sizeof(buf))) {
       return 1;
     }
-    fprintf(stderr, "blake2: %.*s...%s\n", 20, buf, buf + 108);
-    //static const char* wantsha = "68d1800069d0d0f098d151560a5c62049113da1f";
-    static const char* wantsha = "56ec509b2401d2bdea4627c44f51d0ce026ebcd6";
-    if (strcmp(shabuf, wantsha)) {
-      fprintf(stderr, "sha1 want: %s\n", wantsha);
-      fprintf(stderr, "BUG BUG BUG!\n");
-      return 1;
-    }
-    /*
-    static const char* wantb2 = "22e4065be020830611561aafe5420209d050f4ebe5de2"
-        "2cb1fe7bc3ddd272f6fe974c826a1a7ee39fe016eaea8c9702c8d50fa303baafa3ca8"
-        "e6041ef7dc8173";
-    */
-    static const char* wantb2 = "e4b4c3f4cdae6d00ae071fa364098d4cd41c81b0388e1"
-        "3f62e02e75ea4e94fe6f7c9ffd703e7f7b827308b978f3fc33f22e5fad7f3a9a90152"
-        "59f472ea09913f";
-    if (strcmp(buf, wantb2)) {
-      fprintf(stderr, "blake2 want %.*s...\n", 8, wantb2);
-      fprintf(stderr, "BUG BUG BUG!\n");
-      return 1;
-    }
+    fprintf(stderr, "blake2: %s\n", buf);
   }
 
   return gitmine::runOCL(commit, atime_hint, ctime_hint);

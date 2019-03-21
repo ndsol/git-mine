@@ -25,15 +25,18 @@ sha1sum. If there is no b2sum line, it means grep could not find $WANT digits
 in the b2sum output:
 
 ### Example of a valid commit:
-...
-`done`
-`sha1sum` **aabbccddee** 92dbc803c03f2f45cba7ddc5813106cf  -
+...<br/>
+`done`<br/>
+`sha1sum` **aabbccddee** 92dbc803c03f2f45cba7ddc5813106cf  -<br/>
 `b2sum` 4f9997f02a6091ac98d7a47d1a72468dfcda926212e2c855b0600c7b8aa82737d8e082acfea6a95ecad42836881916129c508675f58509 **aabbccddee** 171a74a9  -
 
 ### Example of an invalid commit:
-...
-`done`
+...<br/>
+`done`<br/>
 `sha1sum` **aabbccddee** 92dbc803c03f2f45cba7ddc5813106cf  -
+
+(The above is missing a b2sum line with a highlighted section, if grep
+can use of color.)
 
 # How to sign your commit
 First commit using whatever your normal tools are.
@@ -48,3 +51,12 @@ etc.) as the first parameter. `git-mine` can run
 `git cat-file commit $HASH` as a subprocess and capture the output. To
 Keep It Simple, right now `git-mine` just expects the raw commit to be
 piped in.
+
+## How to sign your commit using OpenCL
+
+```
+cd git-mine
+make git-mine-ocl
+cd /path/to/your/repo
+git cat-file commit HEAD | ~/git-mine/git-mine-ocl
+```
