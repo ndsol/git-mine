@@ -2,6 +2,8 @@
 
 Yes, even git repositories are a cryptocurrency now.
 
+Another implementation, in rust (but also using OpenCL): https://github.com/not-an-aardvark/lucky-commit
+
 # How to verify a commit hash
 
 Assuming the commit is HEAD:
